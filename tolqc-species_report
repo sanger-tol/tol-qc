@@ -1,0 +1,908 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Cwd;
+use JSON;
+use File::Basename;
+use File::Temp qw/ tempfile tempdir /;
+use Number::Format 'format_number';
+
+
+# TODO:
+#   * pacbio-subreads import script
+#   * groups data types to give overall yield and estimated coverage
+#   * colour pass/warn/fail etc based on coverages
+#   * add button to request topup (will just make the jira command for the moment)
+#   * read length distribution plot (asmstats2)
+#   * all-pacbio run data with stats and other useful info from subreadset.xml and sts.xml files?
+#   * ebi submission status and accessions - talk to subtrack DB
+#   * femto plots - is there any way to get and link these to the data?
+#   * assemblies - I think this needs a small database
+
+# https://github.com/VGP/vgp-assembly/blob/master/VGP_specimen_naming_scheme.md
+my %groups = (
+        a => 'amphibians',
+        b => 'birds',
+        c => 'non-vascular-plants',
+        d => 'dicots',
+        e => 'echinoderms',
+        f => 'fish',
+        g => 'fungi',
+        h => 'platyhelminths',
+        i => 'insects',
+        j => 'jellyfish',
+        k => 'chordates',
+        l => 'monocots',
+        m => 'mammals',
+        n => 'nematodes',
+        o => 'sponges',
+        p => 'protists',
+        q => 'arthropods',
+        r => 'reptiles',
+        s => 'sharks',
+        t => 'ctenophores',
+        u => 'algae',
+        v => 'vascular-plants',
+        w => 'annelids',
+        x => 'molluscs',
+        y => 'bacteria',
+        z => 'archea',
+    );
+
+die("Expected TOLQCROOT environment variable to be set") unless (exists $ENV{TOLQCROOT});
+my $root = qq[$ENV{TOLQCROOT}];
+
+# We expect each input line to be a ToLQC directory or a species name
+while(my $dir = <>)
+{
+    chomp $dir;
+    unless (-d $dir)
+    {
+        # If the input is not a directory, assume it is a species
+        # name and look for the project directory with that species
+        $dir =~ s/ /_/g;
+        my @projects = glob(qq[$root/data/*/*/$dir]);
+        if (scalar @projects == 1)
+        {
+            $dir = $projects[0];
+        }
+        else
+        {
+            print STDERR scalar @projects . " project directories found for $dir... skipping\n";
+            next;
+        }
+    }
+    $dir =~ s/\/(genomic_data|working|release).+$//;
+
+    # make a minimal attempt to check the requested directory is indeed a ToLQC directory
+    unless (-d qq[$dir/genomic_data] || -d qq[$dir/working])
+    {
+        print "Directory [$dir] does not appear to have the structure expected by ToLQC... skipping\n";
+        next;
+    }
+
+    my $species = basename($dir);
+    my $group = basename( dirname($dir) );
+    my $project = basename( dirname( dirname($dir) ) );
+    $group = "$project/$group";
+    $species =~ s/_/ /g;
+    my $species_u = $species;
+    $species_u  =~ s/ /_/g;
+    print STDERR "Generating ToLQC report for $species: https://tolqc.cog.sanger.ac.uk/$group/$species_u/index.html\n";
+
+    my $spp = get_specimens($species,$group);
+    my $sts = get_sts_record($species,$spp);
+    unless (scalar @$sts > 0)
+    {
+        print STDERR "WARN: Golden record entry not found for $species... ";
+        $sts = fake_sts_record($species,$spp);
+        if (scalar @$sts > 0)
+        {
+            print STDERR "faking based on specimen names in genomic_data directory\n";
+        }
+        else
+        {
+            print STDERR "skipping\n";
+            next;
+        }
+    }
+    my $gr;
+    foreach my $rec (@$sts)
+    {
+        next unless (exists $$rec{public_name} && $$rec{public_name});
+        $gr = $rec;
+    }
+    unless ($gr)
+    {
+        print STDERR "WARN: No STS record with public_name assigned for $species... skipping\n";
+        next;
+    }
+
+    $gr->{common_name} =~ s/^NA$//;
+    $gr->{common_name} =~ s/^UNKNOWN$//;
+
+    my $data = {
+        name           => $species,
+        _name          => $species_u,
+        common_name    => $gr->{common_name},
+        taxon_id       => $gr->{taxon_id},
+        family         => ucfirst(lc($gr->{family})),
+        order_or_group => ucfirst(lc($gr->{order_or_group})),
+        group          => $group
+    };
+    $$data{sts} = $sts;
+    $data = generate_html($data);
+    sleep(2);
+}
+
+exit;
+
+sub get_sts_record
+{
+    my ($species,$specimens) = @_;
+    my $sts_tsv = qq[$root/track/tol_sts.tsv];
+    open(my $fh, "<$sts_tsv") || die("Could not open $sts_tsv");
+    my @keys;
+    my $index; my $index2;
+    my %spp = map { $_ => 1 } @$specimens;
+    my @sts;
+    while (<$fh>)
+    {
+        chomp;
+        s/’/'/g;
+        my @line = split /\t/;
+        unless (@keys)
+        {
+            @keys = @line;
+            ($index) = grep { $keys[$_] eq 'scientific_name' } 0..$#keys;
+            ($index2) = grep { $keys[$_] eq 'public_name' } 0..$#keys;
+            next;
+        }
+        next unless (scalar @line >= $index && scalar @line >= $index2);
+        next unless ($line[$index] eq $species || exists $spp{"$line[$index2]"});
+        my %hash;
+        @hash{@keys} = @line;
+        push @sts, \%hash;
+    }
+    close($fh);
+    return \@sts;
+}
+
+sub get_specimens
+{
+    my ($species,$project) = @_;
+    my $species_u = $species;
+    $species_u  =~ s/ /_/g;
+    my @dirs = glob( "$root/data/$project/$species_u/genomic_data/*" );
+    return [] unless @dirs; # no specimens found
+
+    my @specimens;
+    foreach my $dir (@dirs)
+    {
+        next unless -d $dir;
+        push @specimens, basename($dir);
+    }
+    return \@specimens;
+}
+
+sub fake_sts_record
+{
+    my ($species,$specimens) = @_;
+    return [] unless @$specimens;
+
+    # TODO: add some memory so we don't keep calling the same API over and over
+    my $species_pct = $species;
+    $species_pct  =~ s/ /%20/g;
+    my $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct"`;
+    return [] if ($spp_json eq 'No results.');
+    $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct" | jq -c .`;
+    my $spp = decode_json($spp_json);
+    my $tx = ''; my $cn = ''; my $family = ''; my $order = '';
+    if (($spp && exists $spp->[0] && exists $spp->[0]->{taxId}))
+    {
+        my %rank;
+        $tx = $spp->[0]->{taxId};
+        if (exists $spp->[0]->{commonName}) { $cn = $spp->[0]->{commonName}; }
+        if (exists $spp->[0]->{lineage})
+        {
+            my $lineage =$spp->[0]->{lineage};
+            $lineage=~ s/; $//;
+            my @taxonomy = split("; ", $lineage);
+            foreach my $taxon (@taxonomy)
+            {
+                next if $taxon =~ / /;
+                my $res_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$taxon" | jq -c .`;
+                my $res = decode_json($res_json);
+                if ($res && scalar @$res == 1) {
+                    $rank{$res->[0]->{rank}} = $res->[0]->{scientificName};
+                }
+            }
+        }
+        $family = exists $rank{family} ? $rank{family} : '';
+        $order = exists $rank{order} ? $rank{order} : '';
+    }
+
+    my @sts;
+    foreach my $specimen (@$specimens)
+    {
+        push @sts, { public_name => $specimen, taxon_id => $tx, common_name => $cn, family => $family, order_or_group => $order  };
+    }
+    return \@sts;
+}
+
+sub generate_html
+{
+    my ($data) = @_;
+    my $wd = qq[$root/data/$$data{group}/$$data{_name}];
+    chdir($wd);
+
+    my $species_img = '';
+    if (-s "$$data{_name}.png")
+    {
+        $species_img = qq[<img src="$$data{_name}.png" />];
+        system(qq[s3cmd --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
+    }
+    my $illumina_json = `find genomic_data -type f -name \*F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"`;
+    my $gscope_json = `find genomic_data -type f -name \*.summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"`;
+    my $pacbio_json = `find genomic_data -type f -name \*ccs\*.stats | pbstats2json -p -u`;
+    my $asm_json = -s 'working' ? `find working/ -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : '{}';
+    my $mashscreen_json = `find genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json`;
+
+    my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
+    chomp $taxon_json;
+    my $taxon = decode_json($taxon_json);
+    my $goat_json = `curl -sS -X GET "https://goat.genomehubs.org/api/v0.0.1/record?recordId=$$data{taxon_id}&result=taxon" -H "accept: application/json" | jq -c .`;
+    chomp $goat_json;
+    my $goat = decode_json($goat_json);
+    my $size = exists $$goat{records}->[0]{record}{attributes}{genome_size} ? format_number( int($$goat{records}->[0]{record}{attributes}{genome_size}{value} /1e6) ) : '';
+    my $asm_size = exists $$goat{records}->[0]{record}{attributes}{assembly_span} ? format_number( int($$goat{records}->[0]{record}{attributes}{assembly_span}{value} /1e6) ) : '';
+    my $chr_num = exists $$goat{records}->[0]{record}{attributes}{chromosome_number} ? $$goat{records}->[0]{record}{attributes}{chromosome_number}{value} : '';
+    my $goat_gs = $size ? [ $size, $$goat{records}->[0]{record}{attributes}{genome_size}{aggregation_source} ] : ['unknown','unknown'];
+    my $goat_asm = $asm_size ? [ $asm_size, $$goat{records}->[0]{record}{attributes}{assembly_span}{aggregation_source} ] : ['unknown','unknown'];
+    my $goat_chr = $chr_num ? [ $chr_num, $$goat{records}->[0]{record}{attributes}{chromosome_number}{aggregation_source} ] : ['unknown','unknown'];
+
+    my $specimens = `find genomic_data -maxdepth 1 -mindepth 1 -type d | cut -f2 -d"/" | sort -V | xargs echo | sed 's/ /,/g'`;
+    $$data{specimens} = $specimens;
+    my $sts_json = encode_json($$data{sts});
+
+    my $genomic_data = '';
+    if (-s "genomic_data/$$data{_name}.mash.png")
+    {
+        my $file =  "genomic_data/$$data{_name}.mash.png";
+        system(qq[s3cmd --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$file]);
+        $genomic_data .= qq[<a href="genomic_data/$$data{_name}.mash.png" data-toggle="lightbox" data-gallery="genomic_data" data-footer="Mash plots show distance between sketches for each data set. Can be use to spot species swaps. Be aware though that structure in the heatmap may be due to technology differences (higher error rate reads vs low error rate reads) or large differences in coverage." data-title="$$data{name} <a href='https://mash.readthedocs.io/en/latest/'>Mash</a> plot"><img src="genomic_data/$$data{_name}.mash.png" class="figure-img img-fluid" width="200"></a>\n];
+    }
+    foreach my $file (glob("genomic_data/*/*/stats/*.hic.png"))
+    {
+        system(qq[s3cmd --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$file]);
+        my ($sample,$tech) = $file =~ m/genomic_data\/([^\/]+)\/([^\/]+)/;
+        $genomic_data .= qq[<a href="$file" data-toggle="lightbox" data-title="$sample $tech Hi-C heatmap" data-gallery="genomic_data" data-footer="Hi-C heatmap of 30 longest contigs from low coverage sampling of the data generated with <a href='https://github.com/wtsi-hpag/PretextMap'>PretextMap</a> and <a href='https://github.com/wtsi-hpag/PretextSnapshot'>PretextSnapshot</a>."><img src="$file" class="figure-img img-fluid" width="200"></a>\n];
+    }
+    foreach my $file (glob("genomic_data/*/*/stats/*.fragment_separation.png"))
+    {
+        system(qq[s3cmd --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$file]);
+        my ($sample,$tech) = $file =~ m/genomic_data\/([^\/]+)\/([^\/]+)/;
+        $genomic_data .= qq[<a href="$file" data-toggle="lightbox" data-title="$sample $tech Hi-C fragment separation distribution" data-gallery="genomic_data" data-footer="Hi-C fragment separation distribution from low coverage sampling of the data generated with <a href='https://github.com/wtsi-hpag/HiLine'>HiLine</a>."><img src="$file" class="figure-img img-fluid" width="200"></a>\n];
+    }
+
+    my ($fh, $filename) = tempfile();
+    print $fh (qq[
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <base href="https://tolqc.cog.sanger.ac.uk/$$data{group}/$$data{_name}/">
+        <meta charset="utf-8">
+        <title>Tree of Life QC: Species Report - $$data{name}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.0/cosmo/bootstrap.min.css" media="screen">
+        <link rel="stylesheet" href="https://bootswatch.com/_assets/css/custom.min.css">
+        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.css">
+        <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script>
+        <!-- <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.js"></script>
+        <script src="https://bootswatch.com/_assets/js/custom.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+    </head>
+    <body>
+        <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
+            <div class="container">
+                <a href="/index.html" class="navbar-brand">Tree of Life QC</a>
+                <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarResponsive">
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link" href="index.html#info">Info</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="index.html#specimens">Specimens</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="index.html#spectra">Spectra</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="index.html#genomic_data">Genomic Data</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="index.html#asm">Assemblies</a>
+                        </li>
+<!--                         <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#data" id="download">Data <span class="caret"></span></a>
+                            <div class="dropdown-menu" aria-labelledby="download">
+                                <a class="dropdown-item" href="#pacbio">PacBio</a>
+                                <a class="dropdown-item" href="#ont" download>ONT</a>
+                                <a class="dropdown-item" href="#linked-reads" download>10XG</a>
+                                <a class="dropdown-item" href="#arima" download>Hi-C Arima</a>
+                            </div>
+                        </li>
+ -->                    </ul>
+                </div>
+            </div>
+        </div>
+
+
+        <div class="container">
+            <div class="page-header" id="banner">
+                <div class="row">
+                    <div class="col-lg-10 col-md-7 col-sm-6">
+                        <h1><i>$$data{name}</i></h1>
+                        <p class="lead">$$data{common_name}</p>
+                    </div>
+                    <div class="col-lg-2 col-md-5 col-sm-6">
+                        $species_img
+                    </div>
+                </div>
+            </div>
+
+            <hr />
+
+            <h2 id="info"><a name="info">Info</a></h2>
+            <table>
+                <tbody>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;">NCBI taxon id:</th>
+                        <td><a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id=$$taxon{taxId}">$$taxon{taxId}</a></td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right;">Order:</th>
+                        <td>$$data{order_or_group}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right;">Family:</th>
+                        <td>$$data{family}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;">NCBI lineage:</th>
+                        <td>$$taxon{lineage}</td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/preview/records?taxon_id=$$taxon{taxId}&result=taxon">GoaT</a> genome size (M):</th>
+                        <td>$$goat_gs[0] ($$goat_gs[1])</td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/preview/records?taxon_id=$$taxon{taxId}&result=taxon">GoaT</a> asm span (M):</th>
+                        <td>$$goat_asm[0] ($$goat_asm[1])</td>
+                    </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/preview/records?taxon_id=$$taxon{taxId}&result=taxon">GoaT</a> chr no.:</th>
+                        <td>$$goat_chr[0] ($$goat_chr[1])</td>
+                    </tr>
+              </tbody>
+            </table>
+
+            <hr />
+
+            <h2 id="specimens"><a name="specimens">Specimens</a></h2>
+            <p>Below is information about specimens collected for this species retrieved from the Golden Record manifest.</p>
+            <div class="section" id="sts">
+                <table id="sts_table" style="width: auto"
+                    data-show-columns="true"
+                    data-show-columns-toggle-all="true"
+                    data-show-export="true"
+                    data-export-types=["txt","xlsx","csv"]
+                    data-show-button-icons="true"
+                    data-pagination="true"
+                    data-page-size=5
+                    data-search="true"
+                    data-search-align="left"
+                    data-sort-order="asc"
+                    data-sort-name="public_name">
+                    <thead>
+                        <tr>
+                            <th data-field="public_name" data-sortable="true">public_name</th>
+                            <th data-field="specimen_id" data-sortable="true">specimen_id</th>
+                            <th data-field="gal" data-sortable="true">gal</th>
+                            <th data-field="collector_affiliation" data-sortable="true" data-visible="false">collector_affiliation</th>
+                            <th data-field="date_of_collection" data-sortable="true" data-visible="false">date_of_collection</th>
+                            <th data-field="sex" data-sortable="true">sex</th>
+                            <th data-field="organism_part" data-sortable="true">organism_part</th>
+                            <th data-field="biosample_id" data-sortable="true" data-formatter="biosample_formatter">biosample</th>
+                            <th data-field="biospecimen_id" data-sortable="true" data-formatter="biosample_formatter">biospecimen</th>
+                            <th data-field="lifestage" data-sortable="true" data-visible="false">lifestage</th>
+                            <th data-field="symbiont" data-sortable="true" data-visible="false">symbiont</th>
+                            <th data-field="family" data-sortable="true" data-visible="false">family</th>
+                            <th data-field="order_or_group" data-sortable="true" data-visible="false">order_or_group</th>
+                            <th data-field="genus" data-sortable="true" data-visible="false">genus</th>
+                            <th data-field="taxon_id" data-sortable="true" data-visible="false">taxon_id</th>
+                            <th data-field="scientific_name" data-sortable="true" data-visible="false">scientific_name</th>
+                            <th data-field="common_name" data-sortable="true" data-visible="false">common_name</th>
+                            <th data-field="tubeid" data-sortable="true" data-visible="false">tube_id</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr />
+
+            <h2><a name="spectra">Spectra estimates</a></h2>
+            <p>Below are estimates of genome size, repeat size, heterozygosity based on <i>k</i>-mer specta analysis with <a href="https://github.com/schatzlab/genomescope">GenomeScope</a>.</p>
+            <div class="section" id="spectra">
+                <table id="gscope_table" style="width: auto"
+                    data-search="true"
+                    data-search-align="left"
+                    data-sort-order="asc"
+                    data-detail-view="true"
+                    data-detail-view-icon="false"
+                    data-detail-view-by-click="true"
+                    data-detail-formatter="gscope_detail_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="type" data-sortable="true">source</th>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="k" data-align='right' data-sortable="true"><i>k</i>-mer</th>
+                            <th data-field="kcov" data-align='right' data-sortable="true"><i>k</i>-cov</th>
+                            <th data-field="max.len" data-align='right' data-sortable="true" data-formatter="local_formatter">haploid</th>
+                            <th data-field="max.rep" data-align='right' data-sortable="true" data-formatter="gs_rep_formatter">repeat (&#37;)</th>
+                            <!-- <th data-field="uniq" data-align='right' data-sortable="true" data-formatter="local_formatter">unique</th> -->
+                            <th data-field="max.het" data-align='right' data-sortable="true" data-formatter="dec2_formatter">het (&#37;)</th>
+                            <th data-field="max.fit" data-align='right' data-sortable="true" data-formatter="dec2_formatter">fit (&#37;)</th>
+                            <th data-field="max.err" data-align='right' data-sortable="true" data-formatter="dec2_formatter">error (&#37;)</th>
+                            <th data-field="plot" data-align='right' data-sortable="false" data-formatter="gs_image_formatter">plot</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <!-- GENOMIC -->
+            <h2><a name="genomic_data">Genomic data</a></h2>
+            <div class="section">
+                $genomic_data
+            </div>
+
+            <hr/>
+
+            <h3><a name="pacbio">PacBio run data</a></h3>
+            <p>Below are stats for each PacBio seqeuncing run collected for this species.</p>
+            <div class="section">
+                <table id="pacbio_table" style="width: auto"
+                    data-toggle="table"
+                    data-show-toggle="true"
+                    data-show-columns="true"
+                    data-show-columns-toggle-all="true"
+                    data-sort-name="date"
+                    data-sort-order="asc"
+                    data-detail-view="true"
+                    data-detail-view-icon="false"
+                    data-detail-view-by-click="true"
+                    data-detail-formatter="asm_image_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="sanger_id" data-sortable="true">sample</th>
+                            <th data-field="date" data-sortable="true">date</th>
+                            <th data-field="instrument" data-sortable="true" data-visible="false">instrument</th>
+                            <th data-field="run" data-sortable="true">run</th>
+                            <th data-field="movie" data-sortable="true">movie</th>
+                            <th data-field="well_label" data-sortable="true">well</th>
+                            <th data-field="MovieLength" data-sortable="true" data-visible="false">movie length</th>
+                            <th data-field="tag_index" data-sortable="true">tag</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag sequence</th>
+                            <th data-field="accession_number" data-sortable="true" data-visible="false">accession</th>
+                            <th data-field="library_load_name" data-sortable="true" data-visible="false">library load name</th>
+                            <th data-field="species_name" data-sortable="true"  data-visible="false">species</th>
+                            <th data-field="sum" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
+                            <th data-field="N50" data-align='right' data-sortable="true" data-formatter="local_formatter">N50</th>
+                            <th data-field="n" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">reads</th>
+                            <th data-field="a" data-align='right' data-sortable="true" data-visible="false">A (&#37;)</th>
+                            <th data-field="c" data-align='right' data-sortable="true" data-visible="false">C (&#37;)</th>
+                            <th data-field="g" data-align='right' data-sortable="true" data-visible="false">G (&#37;)</th>
+                            <th data-field="t" data-align='right' data-sortable="true" data-visible="false">T (&#37;)</th>
+                            <th data-field="barcode" data-align='right' data-sortable="true" data-formatter="bold_modal_formatter" data-cell-style="cellStyle">barcode</th>
+                            <!-- CCS report, LIMA report, chemistry, run-stats(P0,P1,P2), run date, instrument, movie-time, pre-ext, seqkit, bindingkit, reagentbox, cell-lot, loading-conc, pass/fail, totalGb, unique molecular yield, polymerase n50, ... -->
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <h3><a name="mashscreen">Contamination screen</a></h3>
+            <p>Below are results from a contamination screen of the PacBio data using <a href="https://mash.readthedocs.io/en/latest/tutorials.html#screening-a-read-set-for-containment-of-refseq-genomes">Mash screen</a> against RefSeq assemblies.</p>
+            <div class="section">
+                <table id="mashscreen_table" style="width: auto"
+                    data-toggle="table"
+                    data-show-toggle="true"
+                    data-show-columns="true"
+                    data-show-columns-toggle-all="true"
+                    data-pagination="true"
+                    data-page-size=5
+                    data-sort-name="identity"
+                    data-row-style="mashStyle"
+                    data-sort-order="desc">
+                    <thead>
+                        <tr>
+                            <th data-field="identity" data-sortable="true">identity</th>
+                            <th data-field="shared-hashes" data-sortable="true" data-visible="false">shared-hashes</th>
+                            <th data-field="median-multiplicity" data-sortable="true" data-visible="false">median-multiplicity</th>
+                            <th data-field="p-value" data-sortable="true" data-visible="false">p-value</th>
+                            <th data-field="query" data-sortable="true" data-visible="false">query</th>
+                            <th data-field="info" data-sortable="true">info</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <!-- BOLD -->
+            <div class="modal fade" id="bold_modal" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-xl modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="exampleModalCenterTitle"><a href="http://www.boldsystems.org/">BOLD</a> barcode check</h5>
+                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <!-- <p id="demo"></p> -->
+                            <table id="bold_table" class="table mx-auto w-auto" data-sort-order="asc" data-pagination="true">
+                                <thead>
+                                    <tr>
+                                        <th data-field="ID" data-sortable="true" data-formatter="bold_url_formatter">id</th>
+                                        <th data-field="taxonomicidentification" data-sortable="true">taxon</th>
+                                        <th data-field="similarity" data-sortable="true">similarity</th>
+                                        <th data-field="sequencedescription" data-align='right' data-sortable="true">seq</th>
+                                        <th data-field="specimen.collectionlocation.country" data-align='right' data-sortable="true">country</th>
+                                        <th data-field="specimen.collectionlocation.coord.lat" data-align='right' data-sortable="true">latitude</th>
+                                        <th data-field="specimen.collectionlocation.coord.lon" data-align='right' data-sortable="true">longitude</th>
+                                    </tr>
+                                </thead>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <hr/>
+
+            <h3><a name="illumina">Illumina run data</a></h3>
+            <p>Illumina run stats.</p>
+            <div class="section" id="illumina">
+                <div id="toolbar">
+                    <button id="button" class="btn btn-secondary">show all plots</button>
+                    <button id="button2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="illumina_table" style="width: auto"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-sort-order="asc"
+                        data-detail-view="true"
+                        data-detail-view-icon="false"
+                        data-detail-view-by-click="true"
+                        data-detail-formatter="illumina_image_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="type" data-sortable="true">source</th>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="run" data-sortable="true" data-formatter="illumina_run_formatter">run id</th>
+                            <th data-field="reads_paired" data-align='right' data-sortable="true" data-formatter="local_formatter">read pairs</th>
+                            <th data-field="total_length" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
+                            <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
+                            <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
+                            <th data-field="accession_number" data-sortable="true">sample_acc</th>
+                            <th data-field="sanger_id" data-sortable="true">sanger_id</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
+                            <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
+                            <th data-field="run_qc_status" data-sortable="true" data-cell-style="illumina_cell_status_style">run status</th>
+                            <th data-field="npg_qc_status" data-sortable="true" data-visible="false">npg status</th>
+                            <th data-field="date" data-sortable="true">date</th>
+                            <th data-field="species" data-sortable="true" data-visible="false">species</th>
+                            <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <h2><a name="asm">Assemblies</a></h2>
+            <p>In-progress assembly QC.</p>
+            <div class="section" id="asm">
+                <div id="toolbar">
+                    <button id="asmbutton" class="btn btn-secondary">show all plots</button>
+                    <button id="asmbutton2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="asm_table" style="width: auto"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-sort-order="asc"
+                        data-search="true"
+                        data-search-align="left"
+                        data-detail-view="true"
+                        data-detail-view-icon="false"
+                        data-detail-view-by-click="true"
+                        data-detail-formatter="asm_image_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="asm" data-sortable="true">asm</th>
+                            <th data-field="date" data-sortable="true">date</th>
+                            <th data-field="contig_N50" data-sortable="true" data-formatter="local_formatter" data-align="right">contig N50</th>
+                            <th data-field="contig_n" data-sortable="true" data-formatter="local_formatter" data-align="right">contigs</th>
+                            <th data-field="scaffold_N50" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffold N50</th>
+                            <th data-field="scaffold_n" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffolds</th>
+                            <th data-field="length" data-sortable="true" data-formatter="length_formatter" data-align="right">length</th>
+                            <th data-field="busco" data-sortable="true" data-formatter="busco_formatter">BUSCO</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <div class="footer">
+                    <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
+                    <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
+                    at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
+                    Copyright &copy; 2020 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
+            </div>
+        </div>
+
+        <script type="text/javascript">
+
+        \$(document).on('click', '[data-toggle="lightbox"]', function(event) {
+            event.preventDefault();
+            \$(this).ekkoLightbox();
+        });
+        function detailFormatter(index, row) {
+            var html = []
+            html.push('<table><tbody>')
+            \$.each(row, function (key, value) {
+                html.push('<tr><th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;">' + key + ':</th><td>' + value + '</td></tr>')
+            })
+            html.push('</tbody></table>')
+            return html.join('')
+        }
+        function bold_url_formatter(value, row, index) {
+            return '<a href="'+row.specimen.url+'">'+value+'</a>';
+        }
+        function cellStyle(value, row, index) {
+            if (row.match && row.species_name)
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return {
+                        classes: 'bg-danger'
+                    }
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return {
+                        classes: 'bg-warning'
+                    }
+                } else {
+                    return {
+                        classes: 'bg-success'
+                    }
+                }
+            }
+            return {
+                classes: 'bg-warning'
+            }
+        }
+        function mashStyle(row, index) {
+            if (row.identity && parseFloat(row.identity)>0.97)
+            {
+                return {
+                    classes: 'table-danger',
+                }
+            }
+            if (row.identity && parseFloat(row.identity)>0.94)
+            {
+                return {
+                    classes: 'table-warning',
+                }
+            }
+            return {};
+        }
+        function bold_modal_formatter(value, row, index) {
+            if (row.match && row.species_name)
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return '<button type="button" class="btn btn-danger" data-toggle="modal" data-target="#bold_modal">'+row.match[0].taxonomicidentification+' ('+parseFloat(row.match[0].similarity).toFixed(2)+')</button>';
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return '<button type="button" class="btn btn-warning" data-toggle="modal" data-target="#bold_modal">'+row.match[0].taxonomicidentification+' ('+parseFloat(row.match[0].similarity).toFixed(2)+')</button>';
+                } else {
+                    return '<button type="button" class="btn btn-success" data-toggle="modal" data-target="#bold_modal">'+row.match[0].taxonomicidentification+' ('+parseFloat(row.match[0].similarity).toFixed(2)+')</button>';
+                }
+            } else {
+                return '-';
+            }
+        }
+        function tag_formatter(value, row) {
+            return '<button type="button" class="btn btn-primary" data-toggle="modal" data-target="#bold_modal">'+row.match[0].taxonomicidentification+'</button>';
+        }
+        function gs_image_formatter(value, row, index) {
+            return '<a href="'+row["plot-plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-plot.log"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot.log"][0]+'" class="imggallery" width="75px"></a>';
+        }
+        function gscope_detail_formatter(index, row) {
+            var gscope_plots = '';
+            var x;
+            for (x in row) {
+                if (x.match(/^plot/)) {
+                    var img = row[x][0];
+                    var label = row[x][1];
+                    gscope_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+label+' '+row.specimen+'" data-toggle="lightbox" data-gallery="asm'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return gscope_plots;
+        }
+        function illumina_image_formatter(index, row) {
+            var illumina_plots = '';
+            var x;
+            for (x in row) {
+                if (x.match(/^plot/)) {
+                    var img = encodeURIComponent(row[x]);
+                    illumina_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' samtools stats plots" data-toggle="lightbox" data-gallery="illumina'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return illumina_plots;
+        }
+        function gs_rep_formatter(value, row) {
+            var rep = value>0 ? 100*value/row.max.len : 0;
+            return dec2_formatter(rep);
+        }
+        function local_formatter(value) {
+            if (value) {
+                return value.toLocaleString();
+            }
+            return "-"
+        }
+        function length_formatter(value,row) {
+            if (row.scaffold_sum) {
+                return row.scaffold_sum.toLocaleString();
+            }
+            if (row.contig_sum) {
+                return row.contig_sum.toLocaleString();
+            }
+            return "-"
+        }
+        function busco_formatter(value,row) {
+            if (row.busco) {
+                return row.busco[0].busco;
+            }
+            return "-"
+        }
+        function dec2_formatter(value) {
+            return parseFloat(value).toFixed(2);
+        }
+        function info_formatter(value) {
+            return '<strong>' + value + '</strong>';
+        }
+        function illumina_run_formatter(value) {
+            var run = value.match(/^[0-9]+/);
+            return '<a href="http://sfweb.internal.sanger.ac.uk:9000/perl/npg/run/'+run+'">'+value+'</a>';
+        }
+        function biosample_formatter(value) {
+            if (value) {
+                return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
+            }
+            return "-"
+        }
+
+        var taxon = $taxon_json;
+        \$('#taxon_table').bootstrapTable({data: [ taxon ]});
+
+        var sts = $sts_json;
+        \$('#sts_table').bootstrapTable({data: sts});
+
+        var gscope = $gscope_json;
+        \$('#gscope_table').bootstrapTable({data: gscope});
+
+        // document.getElementById("demo").innerHTML = '<div class="ibox float-e-margins"><table class="table table-striped noborder"><tbody><tr><td>Species</td><td>'+match2.species.taxonrep+' ('+match2.species.stats.publicmarkersequences["COI-5P"]+' COI-5P records)</td></tr><tr><td>Genus</td><td>'+match2.genus.taxonrep+' ('+match2.genus.stats.publicmarkersequences["COI-5P"]+' COI-5P records)</td></tr><tr><td>Read</td><td>'+match2.check.readname+':'+match2.check.from+'-'+match2.check.to+match2.check.strand+'</td></tr><tr><td colspan="2" valign="top"><div style="overflow-x:auto;white-space:pre-wrap;white-space: -moz-pre-wrap;white-space: -pre-wrap;white-space: -o-pre-wrap;word-wrap:break-word;">'+match2.check.nucleotides+'</div></td></tr></tbody></table></div>';
+
+        var illumina = $illumina_json;
+        \$('#illumina_table').bootstrapTable({data: illumina});
+
+        var \$button = \$('#button')
+        var \$button2 = \$('#button2')
+
+        \$(function() {
+            \$button.click(function () {
+                \$('#illumina_table').bootstrapTable('expandAllRows')
+            })
+            \$button2.click(function () {
+                \$('#illumina_table').bootstrapTable('collapseAllRows')
+            })
+        })
+
+        var pacbio = $pacbio_json;
+        \$('#pacbio_table').bootstrapTable({data: pacbio});
+
+        var mashscreen = $mashscreen_json;
+        \$('#mashscreen_table').bootstrapTable({data: mashscreen});
+
+        if (pacbio && pacbio[0].match) {
+            \$('#bold_table').bootstrapTable({data: pacbio[0].match});
+        }
+        function illumina_cell_status_style(value, row, index) {
+            if (row.npg_qc_status)
+            {
+                if (row.npg_qc_status==0) {
+                    return {
+                        classes: 'bg-danger'
+                    }
+                }
+                return {
+                    classes: 'bg-success'
+                }
+            }
+            return {
+                classes: 'bg-warning'
+            }
+        }
+
+        var asm = $asm_json;
+        \$('#asm_table').bootstrapTable({data: asm});
+
+        function asm_image_formatter(index, row) {
+            var asm_plots = '';
+            var x;
+            for (x in row) {
+                if (x.match(/^plot/)) {
+                    var img = row[x][0];
+                    var label = row[x][1];
+                    asm_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+label+' '+row.specimen+'" data-toggle="lightbox" data-gallery="asm'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return asm_plots;
+        }
+
+        var \$asmbutton = \$('#asmbutton')
+        var \$asmbutton2 = \$('#asmbutton2')
+
+        \$(function() {
+            \$asmbutton.click(function () {
+                \$('#asm_table').bootstrapTable('expandAllRows')
+            })
+            \$asmbutton2.click(function () {
+                \$('#asm_table').bootstrapTable('collapseAllRows')
+            })
+        })
+
+        </script>
+    </body>
+</html>
+    ]);
+    close($fh);
+    system(qq[s3cmd --quiet put $filename s3://tolqc/$$data{group}/$$data{_name}/index.html && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/index.html]);
+    return $data;
+}

@@ -1,0 +1,262 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2017-2021 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <smn15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use Getopt::Long;
+use JSON;
+use Cwd;
+use File::Basename;
+
+
+my $type = {
+    'raw_total_sequences' => 'i',
+    'filtered_sequences' => 'i',
+    'sequences' => 'i',
+    'is_sorted' => 'b',
+    '1st_fragments' => 'i',
+    'last_fragments' => 'i',
+    'reads_mapped' => 'i',
+    'reads_mapped_and_paired' => 'i',
+    'reads_unmapped' => 'i',
+    'reads_properly_paired' => 'i',
+    'reads_paired' => 'i',
+    'reads_duplicated' => 'i',
+    'reads_MQ0' => 'i',
+    'reads_QC_failed' => 'i',
+    'non_primary_alignments' => 'i',
+    'total_length' => 'i',
+    'bases_mapped' => 'i',
+    'bases_mapped_cigar' => 'i',
+    'bases_trimmed' => 'i',
+    'bases_duplicated' => 'i',
+    'mismatches' => 'i',
+    'error_rate' => 'f',
+    'average_length' => 'i',
+    'maximum_length' => 'i',
+    'average_quality' => 'f',
+    'insert_size_average' => 'f',
+    'insert_size_standard_deviation' => 'f',
+    'inward_oriented_pairs' => 'i',
+    'outward_oriented_pairs' => 'i',
+    'pairs_with_other_orientation' => 'i',
+    'pairs_on_different_chromosomes' => 'i',
+};
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        push @$output, parse_bamstats($opts, $_);
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        push @$output, parse_bamstats($opts, $file);
+    }
+}
+print encode_json($output);
+
+exit;
+
+#------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Convert summary numbers from samtools stats files to json\n",
+        "Usage: $0 [OPTIONS] <stats_file> [...]\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, upload => 0, group => '', species => '', base => "$ENV{PWD}/", regex => '([^\/]+)/([^\/]+)/stats/\S+.stats$' };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-s' || $arg eq '--species' ) { $$opts{species} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub run2lims
+{
+    my ($run) = @_;
+    my %hash;
+    # this is Sanger-specific labelling of Illumina run data:
+    # RUN_LANE#PLEX or RUN_LANE
+    my ($id_run,$position,$tag_index) = $run =~ m/(\d+)_(\d+)#(\d+)/;
+    unless ($id_run)
+    {
+        ($id_run,$position) = $run =~ m/(\d+)_(\d+)/;
+        $tag_index = 'NULL';
+    }
+    return \%hash unless $id_run;
+    #  1 public_name
+    #  2 common_name
+    #  3 pipeline_id_lims
+    #  4 name
+    #  5 supplier_name
+    #  6 accession_number
+    #  7 donor_id
+    #  8 taxon_id
+    #  9 description
+    # 10 id_run
+    # 11 position
+    # 12 tag_index
+    # 13 tag_sequence
+    # 14 tag2_sequence
+    # 15 description
+    # 16 date
+    # 17 study_id
+    # 18 study_name
+    # 19 manual_qc
+    my $track = qq[$ENV{TOLQCROOT}/track];
+    my $lims = -s "$track/tol_illumina_data.lims.tsv.part" ? "$track/tol_illumina_data.lims.tsv.part" : "$track/tol_illumina_data.lims.tsv";
+    open my $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$13=="$position" && \$14=="$tag_index"' $lims | sed 's/NULL//g' |];
+    while (<$fh>)
+    {
+        chomp;
+        my @F = split /\t/;
+        $hash{accession_number} = $F[6];
+        $hash{sanger_id} = $F[4];
+        $hash{taxon_id} = $F[8];
+        $hash{species_lims} = $F[2];
+        $hash{model} = $F[10];
+        $hash{tag_sequence} = $F[14];
+        $hash{tag2_sequence} = $F[15];
+        $hash{run_qc_status} = $F[16];
+        $hash{date} = substr($F[17],0,10);
+        $hash{pipeline_id_lims} = $F[3];
+        $hash{npg_qc_status} = $F[20];
+    }
+    close($fh);
+    return \%hash;
+}
+
+sub parse_bamstats
+{
+    my ($opts,$input) = @_;
+
+    $input = Cwd::abs_path($input) unless ($input =~ /^\//);
+
+    my $species = $$opts{species};
+    unless ($species)
+    {
+        ($species) = $input =~ m{/([^\/]+)/genomic_data};
+        $species =~ s/_/ /g;
+    }
+    my $group = $$opts{group};
+    unless ($group)
+    {
+        ($group) = $input =~ m{([^\/]+/[^\/]+)/[^\/]+/genomic_data};
+    }
+
+    my $dir = dirname($input);
+    my $base = basename($input);
+    $base =~ s/_F0xB00.stats$//;
+    my $run_info = run2lims($base);
+    my $hash = { run => $base, ( %$run_info )};
+    open(my $fh, "<$input") || die("Could not open $input");
+    while(<$fh>)
+    {
+        chomp;
+        next unless /^SN/;
+        my (undef, $key, $val, undef) = split /\t/;
+        $key =~ s/[:\(\)]//g;
+        $key =~ s/[ -]/_/g;
+        next unless (exists $$type{"$key"});
+        if ($$type{"$key"} eq 'i')
+        {
+            $$hash{"$key"} = $val+0;
+        }
+        elsif ($$type{"$key"} eq 'f')
+        {
+            $$hash{"$key"} = $val+0.0;
+        }
+        elsif ($$type{"$key"} eq 'b')
+        {
+            $$hash{"$key"} = $val==1 ? JSON::true : JSON::false;
+        }
+        else
+        {
+            print STDERR "no key $key";
+        }
+    }
+    close $fh;
+    my ($specimen,$type) = $input =~ m{$$opts{regex}};
+    $$hash{type} = $type if ($type);
+    $$hash{specimen} = $specimen if ($specimen);
+    $$hash{group} = $group if ($group);
+    $$hash{species} = $species if ($species);
+    $$hash{platform} = 'Illumina';
+
+    # 33254_3#6/33254_3#6_F0xB00-acgt-cycles.png
+    # 33254_3#6/33254_3#6_F0xB00-gc-content.png
+    # 33254_3#6/33254_3#6_F0xB00-quals2.png
+    # 33254_3#6/33254_3#6_F0xB00-quals3.png
+    # 33254_3#6/33254_3#6_F0xB00-quals-hm.png
+    # 33254_3#6/33254_3#6_F0xB00-quals.png
+
+    foreach my $label (qw(acgt-cycles gc-content quals quals-hm quals2 quals3), qw(insert-size mism-per-cycle indel-cycles indel-dist gc-depth))
+    {
+        my $plot = qq[$dir/$base/${base}_F0xB00-$label.png];
+        next unless (-s $plot);
+        my $plot_path = $plot;
+        $plot_path =~ s/$$opts{base}//;
+        $$hash{"plot-$label"} = $plot_path;
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot_path && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot_path]);
+        }
+    }
+    foreach my $label (qw(hic fragment_separation))
+    {
+        my $plot = qq[$dir/$base/${base}.$label.png];
+        next unless (-s $plot);
+        my $plot_path = $plot;
+        $plot_path =~ s/$$opts{base}//;
+        $$hash{"plot-$label"} = $plot_path;
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot_path && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot_path]);
+        }
+    }
+    return $hash;
+}

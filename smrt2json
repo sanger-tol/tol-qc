@@ -1,0 +1,295 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2020 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use JSON;
+use XML::Simple;
+use Cwd;
+use File::Basename;
+
+# https://github.com/VGP/vgp-assembly/blob/master/VGP_specimen_naming_scheme.md
+my %groups = (
+        a => 'amphibians',
+        b => 'birds',
+        c => 'non-vascular-plants',
+        d => 'dicots',
+        e => 'echinoderms',
+        f => 'fish',
+        g => 'fungi',
+        h => 'platyhelminths',
+        i => 'insects',
+        j => 'jellyfish',
+        k => 'chordates',
+        l => 'monocots',
+        m => 'mammals',
+        n => 'nematodes',
+        o => 'sponges',
+        p => 'protists',
+        q => 'arthropods',
+        r => 'reptiles',
+        s => 'sharks',
+        t => 'ctenophores',
+        u => 'algae',
+        v => 'vascular-plants',
+        w => 'annelids',
+        x => 'molluscs',
+        y => 'bacteria',
+        z => 'archea',
+    );
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        push @$output, parse_smrtreport($opts, $_);
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        push @$output, parse_smrtreport($opts, $file);
+    }
+}
+print encode_json($output);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Extract stats from a SMRT report directory\n",
+        "Usage: smrt2json <reports_directory>\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, minimal => 0, input => '-', base => "$ENV{PWD}/" };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-m' || $arg eq '--minimal' ) { $$opts{minimal} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub parse_smrtreport
+{
+    my ($opts,$input) = @_;
+    $input = Cwd::abs_path($input);
+    my $base = basename($input);
+    my $movie = '';
+    my $barcode = '';
+    ($movie,$barcode) = $base =~ m/([^\.]+)\.ccs\.([^\.]+)\.stats$/;
+    unless ($movie)
+    {
+        ($movie) = $base =~ m/([^\.]+)\.ccs\.stats$/;
+    }
+    my ($instrument, $dt) = $movie =~ m/m(\d+)_(\d{6})_/;
+    my @a = ( $dt =~ m/../g );
+    $dt = join "-", @a;
+    $dt = "20$dt";
+    my $tag_index = '';
+    if ($barcode) { ($tag_index) = $barcode =~ m/bc(\d+)/; }
+    my $movie_info = movie2lims($opts, $movie, $tag_index);
+
+    my $stats = { movie => $movie, barcode => $barcode, date => $dt, instrument => $instrument, a => 0+0, c => 0+0, g => 0+0, t => 0+0, ( %$movie_info ) };
+    $$stats{tag_index} = $tag_index if ($tag_index);
+    my ($species,$specimen,$source) = $input =~ m{([^\/]+)/genomic_data/([^\/]+)/([^\/]+)/stats};
+    $species =~ s/_/ /g;
+    if ($species && !(exists $$stats{species_name} && $$stats{species_name}))
+    {
+        my @species_split = split " ", $species;
+        $$stats{species_name} = join " ", @species_split[0..1];
+    }
+    $$stats{type} = $source if ($source);
+    if ($specimen)
+    {
+        $$stats{specimen} = $specimen;
+        my ($group) = $specimen =~ m/^([a-z])/;
+        $$stats{group} = $groups{$group} if (exists $groups{$group});
+    }
+
+    if (exists $$opts{base})
+    {
+        $input =~ s/$$opts{base}//;
+        $$stats{input} = $input;
+    }
+    return $stats;
+}
+
+sub movie2lims
+{
+    my ($opts,$movie,$barcode) = @_;
+    my %hash;
+    my $track = qq[$ENV{TOLQCROOT}/track];
+    my $baton = -s "$track/tol_pacbio_data.json.part" ? "$track/tol_pacbio_data.json.part" : "$track/tol_pacbio_data.json";
+    return {} unless (`baton2tsv -c run,well $baton | grep $movie`);
+    open my $fh, "baton2tsv -c run,well $baton | grep $movie | ";
+    my ($rundir,$run,$well);
+    while (<$fh>)
+    {
+        chomp;
+        ($rundir,$run,$well) = split /\t/;
+        $rundir =~ s/\/[^\/]+$//;
+        $run =~ s/RUN(\d)/RUN-$1/;
+        $run = "TRACTION-RUN-$run" if ($run =~ /^(\d+)$/ && $run<1000);
+        $hash{rundir} = $rundir;
+        $hash{run} = $run;
+        $hash{well_label} = $well;
+        $well =~ s/0//;
+    }
+    close($fh);
+    my $lims = -s "$track/tol_pacbio_data.lims.tsv.part" ? "$track/tol_pacbio_data.lims.tsv.part" : "$track/tol_pacbio_data.lims.tsv";
+    open my $fh2, qq[awk -F"\\t" '\$12=="$hash{run}" && \$13=="$well" && \$9~/$barcode/' $lims | sed 's/NULL//g; s/ orion//g' |];
+    while (<$fh2>)
+    {
+        chomp;
+        s/plate_barcode placeholder//;
+        my @F = split /\t/;
+        $hash{species_name} = $F[6];
+        $hash{accession_number} = $F[2];
+        $hash{sanger_id} = $F[0];
+        $hash{tag_sequence} = $F[9];
+        $hash{library_load_name} = $F[10];
+    }
+    close($fh2);
+    unless ($$opts{minimal})
+    {
+        $hash{subreadset} = readXML($track, $hash{rundir}, "$movie.subreadset.xml");
+        $hash{sts} = readXML($track, $hash{rundir}, "$movie.sts.xml");
+    }
+    return \%hash;
+}
+
+sub readXML
+{
+    my ($track, $rundir, $xml_base) = @_;
+    my $xml_file;
+    if (-s "$track/$rundir/$xml_base")
+    {
+        $xml_file = "cat $track/$rundir/$xml_base |";
+    }
+    else
+    {
+        my $xml_exists = `ils $rundir/$xml_base`;
+        if (`ils $rundir/$xml_base`)
+        {
+            $xml_file = "iget $rundir/$xml_base - |";
+        }
+        else
+        {
+            return {};
+        }
+    }
+    my $xml = '';
+    open(my $fh, $xml_file) or die $!;
+    while (<$fh>)
+    {
+        $xml .= $_;
+    }
+    close($fh);
+    return XMLin($xml);
+}
+
+sub bold2json
+{
+    my ($coi,$species) = @_;
+    my $bold = XMLin($coi);
+    if (exists $$bold{match} && scalar @{$$bold{match}} > 0)
+    {
+        # use Data::Dumper;
+        # print STDERR Dumper($$bold{match});
+        if ($species)
+        {
+            my $top_similarity = $$bold{match}->[0]->{similarity};
+            my $top_taxon = $$bold{match}->[0]->{taxonomicidentification};
+            unless ($top_taxon eq $species)
+            {
+                foreach my $match (@{$$bold{match}})
+                {
+                    if ($species && ($$match{taxonomicidentification} eq $species) && ($top_similarity-$$match{similarity}<0.003))
+                    {
+                        unshift @{$$bold{sorted}}, $match;
+                    }
+                    else
+                    {
+                        push @{$$bold{sorted}}, $match;
+                    }
+                }
+                $$bold{match} = $$bold{sorted};
+            }
+        }
+    }
+    else
+    {
+        my $cov = $coi;
+        $cov =~ s/match.xml$/20000.blastn.cov/;
+        if (-s $cov)
+        {
+            open(my $fh, "<$cov") || die("Could not read from '$cov'");
+            while(<$fh>)
+            {
+                my ($read,$idstring,$identity) = split /\t/;
+                my ($id,$species,$marker) = split(/\|/,$idstring);
+                $species =~ s/_/ /g;
+                my $record = {
+                    'database' => 'BOLD: Public Records',
+                    'ID' => "$id",
+                    'sequencedescription' => "$marker",
+                    'taxonomicidentification' => "$species",
+                    'similarity' => $identity,
+                    'specimen' => {
+                    'collectionlocation' => {
+                            'country' => {},
+                            'coord' => {
+                                'lat' => {},
+                                'lon' => {}
+                            }
+                        },
+                        'url' => "http://www.boldsystems.org/index.php/Public_RecordView?processid=$id"
+                    },
+                    'citation' => 'BOLD Systems, 2020'
+                };
+                push @{$$bold{match}}, $record;
+            }
+            close($fh);
+        }
+    }
+    return $bold;
+}

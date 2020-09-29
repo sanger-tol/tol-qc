@@ -1,0 +1,332 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Cwd;
+use File::Basename;
+use JSON;
+use File::Temp qw/ tempfile tempdir /;
+
+die("Expected TOLQCROOT environment variable to be set") unless (exists $ENV{TOLQCROOT});
+my $root = qq[$ENV{TOLQCROOT}];
+
+my $list;
+open(my $fh, qq[find -L $root/data -mindepth 4 -maxdepth 4 -type d -name genomic_data | cut -d'/' -f7,8,9 |]);
+while(<$fh>)
+{
+    chomp;
+    my $species_u = basename($_);
+    my $group = dirname($_);
+    # next if ($species_u =~ /\./);
+    # print "$species_u\t$group\n";
+    my $species = $species_u;
+    $species =~ s/_/ /g;
+    # unless (`s3cmd ls s3://tolqc/$group/$species_u/index.html`)
+    # {
+    #     print STDERR qq[skipping "$species" as report does not exist at s3://tolqc/$group/$species_u/index.html\n];
+    #     next;
+    # }
+
+    my $spp = get_specimens($species,$group);
+    my $sts = get_sts_record($species,$spp);
+    if (scalar @$sts > 0)
+    {
+        if ($$sts[0]->{scientific_name} ne $species)
+        {
+            print STDERR "WARN: STS records not found for species $species... ";
+            print STDERR "but specimen records found for $$sts[0]->{public_name} as species $$sts[0]->{scientific_name}\n";
+        }
+    }
+    else
+    {
+        print STDERR "WARN: STS records not found for species $species... ";
+        $sts = fake_sts_record($species,$spp);
+        if (scalar @$sts > 0)
+        {
+            print STDERR "faking based on specimen names in genomic_data directory\n";
+        }
+        else
+        {
+            print STDERR "skipping\n";
+            next;
+        }
+    }
+
+    my %specimens;
+    foreach my $specimen (@$sts)
+    {
+        $specimens{ $specimen->{public_name} }++;
+    }
+    $$sts[0]->{common_name} =~ s/^NA$//;
+    $$sts[0]->{common_name} =~ s/^UNKNOWN$//;
+    my $data = {
+        name        => $species,
+        _name       => $species_u,
+        common_name => $$sts[0]->{common_name},
+        taxon       => $$sts[0]->{taxon_id},
+        family      => ucfirst(lc($$sts[0]->{family})),
+        order       => ucfirst(lc($$sts[0]->{order_or_group})),
+        group       => $group,
+        specimens   => join(',', sort keys %specimens)
+    };
+    # if (-s qq[$root/status/$group/$species_u/status.json])
+    # {
+    #     my $status_json = `cat $root/status/$group/$species_u/status.json | jq -c .`;
+    #     $$data{status} = decode_json($status_json);
+    #     foreach my $tech (keys %{$$data{status}})
+    #     {
+    #         $$data{status}{hic} = $$data{status}{"$tech"} if ($tech =~ m/hic-/);
+    #     }
+    # }
+    push @$list, $data;
+}
+close($fh);
+
+generate_landing_page($list);
+
+exit;
+
+sub get_sts_record
+{
+    my ($species,$specimens) = @_;
+    my $sts_tsv = qq[$root/track/tol_sts.tsv];
+    open(my $fh, "<$sts_tsv") || die("Could not open $sts_tsv");
+    my @keys;
+    my $index; my $index2;
+    my %spp = map { $_ => 1 } @$specimens;
+    my @sts;
+    while (<$fh>)
+    {
+        chomp;
+        s/’/'/g;
+        my @line = split /\t/;
+        unless (@keys)
+        {
+            @keys = @line;
+            ($index) = grep { $keys[$_] eq 'scientific_name' } 0..$#keys;
+            ($index2) = grep { $keys[$_] eq 'public_name' } 0..$#keys;
+            next;
+        }
+        next unless (scalar @line >= $index && scalar @line >= $index2);
+        next unless ($line[$index] eq $species || exists $spp{"$line[$index2]"});
+        my %hash;
+        @hash{@keys} = @line;
+        push @sts, \%hash;
+    }
+    close($fh);
+    return \@sts;
+}
+
+sub get_specimens
+{
+    my ($species,$project) = @_;
+    my $species_u = $species;
+    $species_u  =~ s/ /_/g;
+    my @dirs = glob( "$root/data/$project/$species_u/genomic_data/*" );
+    return [] unless @dirs; # no specimens found
+
+    my @specimens;
+    foreach my $dir (@dirs)
+    {
+        next unless -d $dir;
+        push @specimens, basename($dir);
+    }
+    return \@specimens;
+}
+
+sub fake_sts_record
+{
+    my ($species,$specimens) = @_;
+    return [] unless @$specimens;
+
+    # TODO: add some memory so we don't keep calling the same API over and over
+    my $species_pct = $species;
+    $species_pct  =~ s/ /%20/g;
+    my $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct"`;
+    return [] if ($spp_json eq 'No results.');
+    $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct" | jq -c .`;
+    my $spp = decode_json($spp_json);
+    my $tx = ''; my $cn = ''; my $family = ''; my $order = '';
+    if (($spp && exists $spp->[0] && exists $spp->[0]->{taxId}))
+    {
+        my %rank;
+        $tx = $spp->[0]->{taxId};
+        if (exists $spp->[0]->{commonName}) { $cn = $spp->[0]->{commonName}; }
+        if (exists $spp->[0]->{lineage})
+        {
+            my $lineage =$spp->[0]->{lineage};
+            $lineage=~ s/; $//;
+            my @taxonomy = split("; ", $lineage);
+            foreach my $taxon (@taxonomy)
+            {
+                next if $taxon =~ / /;
+                my $res_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$taxon" | jq -c .`;
+                my $res = decode_json($res_json);
+                if ($res && scalar @$res == 1) {
+                    $rank{$res->[0]->{rank}} = $res->[0]->{scientificName};
+                }
+            }
+        }
+        $family = exists $rank{family} ? $rank{family} : '';
+        $order = exists $rank{order} ? $rank{order} : '';
+    }
+
+    my @sts;
+    foreach my $specimen (@$specimens)
+    {
+        push @sts, { public_name => $specimen, taxon_id => $tx, common_name => $cn, family => $family, order_or_group => $order  };
+    }
+    return \@sts;
+}
+
+sub generate_landing_page
+{
+    my ($list) = @_;
+
+    my $reports_json = encode_json($list);
+
+    my ($fh, $filename) = tempfile();
+    print $fh (qq[
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <base href="https://tolqc.cog.sanger.ac.uk/">
+        <meta charset="utf-8">
+        <title>Tree of Life QC</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.0/cosmo/bootstrap.min.css" media="screen">
+        <link rel="stylesheet" href="https://bootswatch.com/_assets/css/custom.min.css">
+        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.css">
+        <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script>
+        <!-- <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.js"></script>
+        <script src="https://bootswatch.com/_assets/js/custom.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+        <style>
+        .dot {
+          height: 20px;
+          width: 20px;
+          background-color: #bbb;
+          border-radius: 50%;
+          display: inline-block;
+        }
+        </style>
+    </head>
+    <body>
+        <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
+            <div class="container">
+                <a href="/index.html" class="navbar-brand">Tree of Life QC</a>
+                <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+            </div>
+        </div>
+
+        <div class="container">
+            <div class="page-header" id="banner">
+                <div class="row">
+                    <div class="col-lg-8 col-md-7 col-sm-6">
+                        <h1>Technology run reports</h1>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" id="tech_reports">
+                <div class="col-lg-8">
+                <div class="bs-component">
+                    <div class="list-group list-group-horizontal">
+                        <a href="/illumina.html" class="list-group-item list-group-item-action">Illumina</a>
+                        <a href="/pacbio.html" class="list-group-item list-group-item-action">PacBio</a>
+                        <!-- <a href="/ccs.html" class="list-group-item list-group-item-action disabled">PacBio CCS</a> -->
+                        <a href="/ont.html" class="list-group-item list-group-item-action disabled">ONT</a>
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <hr/>
+
+            <div class="page-header" id="banner">
+                <div class="row">
+                    <div class="col-lg-8 col-md-7 col-sm-6">
+                        <h1>Species reports</h1>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" id="reports">
+                <table id="reports_table" style="width: auto"
+                        data-pagination="true"
+                        data-toggle="table"
+                        data-search="true"
+                        data-sort-name="name"
+                        data-search-align="left"
+                        data-sort-order="asc">
+                    <thead>
+                        <tr>
+                            <th data-field="group" data-sortable="true" data-filter-control="true">group</th>
+                            <th data-field="name" data-sortable="true" data-formatter="species_link_formatter">species</th>
+                            <th data-field="common_name" data-sortable="true">common name</th>
+                            <th data-field="taxon" data-sortable="true" data-formatter="taxon_link_formatter">taxon</th>
+                            <th data-field="family" data-sortable="true">family</th>
+                            <th data-field="order" data-sortable="true">order</th>
+<!--                             <th data-field="status.pacbio" data-sortable="true" data-align="center">PacBio</th>
+                            <th data-field="status.10x" data-sortable="true" data-align="center">10XG</th>
+                            <th data-field="status.hic" data-sortable="true" data-align="center">Hi-C</th>
+ -->                            <!-- <th data-field="status.pacbio" data-sortable="true" data-align="center" data-formatter="status_formatter">PacBio</th> -->
+                            <!-- <th data-field="status.10x" data-sortable="true" data-align="center" data-formatter="status_formatter">10XG</th> -->
+                            <!-- <th data-field="status.hic" data-sortable="true" data-align="center" data-formatter="status_formatter">Hi-C</th> -->
+                            <th data-field="specimens" data-sortable="true" data-visible="false">specimens</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <div class="footer">
+                    <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
+                    <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
+                    at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
+                    Copyright &copy; 2020 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
+            </div>
+        </div>
+
+        <script type="text/javascript">
+
+        function taxon_link_formatter(value, row) {
+            return '<a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id='+value+'">'+value+'</a>';
+        }
+
+        function species_link_formatter(value, row) {
+            return '<i><a href="'+row.group+'/'+row._name+'/index.html">'+value+'</a></i>';
+        }
+
+        function status_formatter(value, row) {
+            if (value && value.reads)
+            {
+                return '<span class="dot"></span>';
+                // return '<svg height="100" width="100"><circle cx="50" cy="50" r="40" stroke="black" stroke-width="3" fill="red" /></svg>';
+            }
+            return '';
+        }
+
+        var reports = $reports_json;
+        \$('#reports_table').bootstrapTable({data: reports});
+
+        </script>
+    </body>
+</html>
+    ]);
+    close($fh);
+    system(qq[s3cmd --quiet put $filename s3://tolqc/index.html && s3cmd --quiet setacl --acl-public s3://tolqc/index.html]);
+}

@@ -1,0 +1,195 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2021 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use Getopt::Long;
+use JSON;
+
+my $opts = parse_params();
+status($opts);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "About: Get summary stats for a Tree of Life specimen\n",
+        "Usage: tolqc-status [OPTIONS] <tolid>\n",
+        "Options:\n",
+        "   -t, --tech STR          select technology (required, see below)\n",
+        "   -k, --kmer INT          kmer to use for Genomescope estimate [31]\n",
+        "   -j, --jira              output text to request topup via jira\n",
+        "   -h, --help              this help message.\n",
+        "\n",
+        "Valid values for (--tech):\n",
+        "    * pacbio        * ont             * 10x\n",
+        "    * hic-arima     * hic-dovetail    * hic-qiagen\n",
+        "    * htag          * asm             \n",
+        "\n";
+}
+
+
+sub parse_params
+{
+    my $opts = { input => '-', kmer => 31, jira => 0 };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-t' || $arg eq '--tech' ) { $$opts{tech} = shift(@ARGV); next; }
+        if ( $arg eq '-c' || $arg eq '--comment' ) { $$opts{comment} = shift(@ARGV); next; }
+        if ( $arg eq '-k' || $arg eq '--kmer' ) { $$opts{kmer} = shift(@ARGV); next; }
+        if ( $arg eq '-j' || $arg eq '--jira' ) { $$opts{jira} = 1; next; }
+        if ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        if (scalar @ARGV == 0) { $$opts{input} = $arg; next; }
+        error("Unknown parameter \"$arg\". Run -h for help.\n");
+    }
+    error() if ($$opts{input} eq '-' && -t STDIN);
+    return $opts;
+}
+
+sub status
+{
+    my ($opts) = @_;
+    my $tech = $$opts{tech};
+    while(<>)
+    {
+        my $specimen = $_;
+        chomp $specimen;
+        if ($tech eq 'asm')
+        {
+            my @asms = sort glob(qq[$ENV{TOLQCROOT}/data/*/*/*/working/$specimen.hifiasm.*/purging/purged.fa.gz]);
+            unless (@asms)
+            {
+                print STDERR qq[No assemblies found for specimen $specimen... skipping\n];
+                next;
+            }
+            my $asm = $asms[-1];
+            my $asm_json = `echo $asm.stats | asm2json -p`;
+            my $stats = decode_json($asm_json);
+            $stats = $stats->[0];
+            my $busco = exists $$stats{busco} ? $$stats{busco}[0]{busco} : '';
+            my $qv = exists $$stats{qv} ? $$stats{qv} : '';
+            my $completeness = exists $$stats{completeness} ? $$stats{completeness} : '';
+            if (exists $$stats{N50})
+            {
+                print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, $$stats{scaffold_N50} / 1e6, $$stats{scaffold_n}, $$stats{scaffold_largest} / 1e6, $$stats{scaffold_sum}/1e6, $busco, $qv, $completeness . "\n");
+            }
+            else
+            {
+                print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, "-", "-", $$stats{contig_largest} / 1e6 , $$stats{contig_sum} / 1e6, $busco, $qv, $completeness . "\n");
+            }
+        }
+        else
+        {
+            my ($dir) = glob(qq[$ENV{TOLQCROOT}/data/*/*/*/genomic_data/$specimen/$tech]);
+            unless ($dir)
+            {
+                print STDERR qq[No $tech data directory found for specimen $specimen... skipping\n];
+                next;
+            }
+            my ($species_dir,$tech_dir) = $dir =~ m/(\S+)\/(genomic_data\S+)$/;
+            chdir($species_dir);
+            my $gscope_json = `find $tech_dir -type f -name \*.summary.txt | gscope2json -p`;
+            my $gscope = decode_json($gscope_json);
+            my $data;
+            if ($tech eq 'pacbio')
+            {
+                my $pacbio_json = `find $tech_dir -type f -name \*ccs\*.stats | pbstats2json -p`;
+                $data = decode_json($pacbio_json);
+            }
+            else
+            {
+                my $illumina_json = `find $tech_dir -type f -name \*F0xB00.stats | bamstats2json -p`;
+                $data = decode_json($illumina_json);
+            }
+
+            my $yield = 0;
+            my $reads = 0;
+            my %runs;
+            if ($tech eq 'pacbio')
+            {
+                foreach my $run (@$data)
+                {
+                    $yield += $$run{sum};
+                    $reads += $$run{n};
+                    $runs{"$$run{run}/$$run{well_label}"} = 1 if (exists $$run{run} && exists $$run{well_label});
+                }
+            }
+            else
+            {
+                foreach my $run (@$data)
+                {
+                    $yield += $$run{total_length};
+                    $reads += $$run{reads_paired};
+                    my ($runid) = $$run{run} =~ m/(\d+)/;
+                    $runs{$runid} = 1;
+                }
+            }
+            my $size = 0;
+            my $cov = 0;
+            my $het = 0;
+            my $rep = 0;
+            my $fit = 0;
+            my $err = 0;
+            foreach my $gs (@$gscope)
+            {
+                next unless ($$gs{k} eq $$opts{kmer});
+                $cov = $$gs{kcov}*2;
+                $size = $$gs{max}{len};
+                $rep = $$gs{max}{rep};
+                $het = $$gs{max}{het};
+                $fit = $$gs{max}{fit};
+                $err = $$gs{max}{err};
+            }
+            if ($$opts{jira})
+            {
+                my $yield_txt = int( $yield / 1e9 );
+                my $size_txt = int( $size / 1e6 );
+                my $cov_txt = int( $cov );
+                my $runs_txt = join ',', sort keys %runs;
+                print qq[$specimen\t${yield_txt}G so far from runs $runs_txt. Current coverage estimate: ${cov_txt}x and genome size estimate from data: ${size_txt}M\n];
+            }
+            else
+            {
+                if ($cov)
+                {
+                    # print join "\t", ($specimen, $$opts{kmer}, $size/1e6, $het, 100 * $rep / $size, $cov, "$fit", "$err");
+                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov);
+                    print "\n"
+                }
+                else
+                {
+                    # print join "\t", ($specimen, $$opts{kmer}, 0, 0, 0, 0, 0, 0);
+                    print join "\t", ($specimen, 0, 0, 0, 0);
+                    print "\n"
+                }
+            }
+        }
+        }
+}

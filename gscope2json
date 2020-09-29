@@ -1,0 +1,193 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2020 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use JSON;
+use Cwd;
+use File::Basename;
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        push @$output, parse_gs($opts, $_);
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        push @$output, parse_gs($opts, $file);
+    }
+}
+print encode_json($output);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Convert GenomeScope results to json\n",
+        "Usage: gscope2json <genomescope_summary_file>\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, base => "$ENV{PWD}/", regex => '([^\/]+)/preqc/k\d+/(\S+).k\d+.summary.txt', group => '', upload => 0 };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub parse_gs
+{
+    my ($opts,$input) = @_;
+    $input = Cwd::abs_path($input);
+    open(my $fh, "<$input") or die("Could not open $input");
+    my ($version, $k, $min_het, $max_het, $min_len, $max_len, $min_rep, $max_rep, $min_uniq, $max_uniq, $min_fit, $max_fit, $min_err, $max_err);
+    while (<$fh>)
+    {
+        chomp;
+        s/,//g;
+        if (/^GenomeScope version (\S+)/) { $version = $version; }
+        elsif (/^k = (\d+)/) { $k = $1+0; }
+        elsif (/^Heterozygosity\s+([-\d\.]+)%\s+([-\d\.]+)%/) { $min_het = $1+0; $max_het = $2+0; }
+        elsif (/^Genome Haploid Length\s+([-\d\,]+) bp\s+([-\d\,]+) bp/) { $min_len = $1+0; $max_len = $2+0; }
+        elsif (/^Genome Repeat Length\s+([-\d\,]+) bp\s+([-\d\,]+) bp/) { $min_rep = $1+0; $max_rep = $2+0; }
+        elsif (/^Genome Unique Length\s+([-\d\,]+) bp\s+([-\d\,]+) bp/) { $min_uniq = $1+0; $max_uniq = $2+0; }
+        elsif (/^Model Fit\s+([-\d\.]+)%\s+([-\d\.]+)%/) { $min_fit = $1+0; $max_fit = $2+0; }
+        elsif (/^Read Error Rate\s+([-\d\.]+)%\s+([-\d\.]+)%/) { $min_err = $1+0; $max_err = $2+0; }
+    }
+    close $fh;
+    my $model = $input;
+    $model =~ s/summary/model/;
+    my $kcov = 0; my $dup = 0;
+    if (-s $model)
+    {
+        $kcov = `grep ^kmercov $model | awk '{print \$2}'`;
+        chomp $kcov;
+        $kcov = $kcov+0;
+        $dup = `grep ^bias $model | awk '{print \$2}'`;
+        chomp $dup;
+        $dup = $dup+0;
+    }
+    my $hash = { k => $k, dup => $dup, kcov => $kcov,
+        min => { het => $min_het, len => $min_len, rep => $min_rep, uniq => $min_uniq, fit => $min_fit, err => $min_err },
+        max => { het => $max_het, len => $max_len, rep => $max_rep, uniq => $max_uniq, fit => $max_fit, err => $max_err }
+    };
+    my ($type,$specimen) = $input =~ m{$$opts{regex}};
+    $$hash{type} = $type if ($type);
+    $$hash{specimen} = $specimen if ($specimen);
+    my $base = $input;
+    $base =~ s/\.summary\.txt//;
+    # $plot =~ s/summary\.txt/plot.png/;
+    my %plots = ( "$base.plot.png" => "Genomescope plot", "$base.plot.log.png" => "Genomescope log10 plot", "$base.smudgeplot.png" => "Smudge plot", "$base.smudgeplot_log10.png" => "Smudge log10 plot");
+    while (my ($plot, $caption) = each %plots)
+    {
+        if (-s $plot && exists $$opts{base})
+        {
+            my $relplot = $plot;
+            $relplot =~ s/$$opts{base}//;
+            my $label = $plot;
+            $label =~ s/$base\.//;
+            $label =~ s/\.png$//;
+            if ($$opts{upload})
+            {
+                system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$relplot && s3cmd --quiet setacl --acl-public s3://tolqc/$$opts{group}/$relplot]) if ($$opts{group});
+            }
+            $$hash{"plot-$label"} = [ $relplot, $caption ];
+        }
+    }
+    if (exists $$opts{base})
+    {
+        $input =~ s/$$opts{base}//;
+        $$hash{input} = $input;
+    }
+    return $hash;
+}
+
+# GenomeScope version 1.0
+# k = 31
+
+# property                      min               max
+# Heterozygosity                1.18688%          1.18845%
+# Genome Haploid Length         376,078,667 bp    376,174,577 bp
+# Genome Repeat Length          59,641,218 bp     59,656,429 bp
+# Genome Unique Length          316,437,448 bp    316,518,149 bp
+# Model Fit                     96.2895%          96.9575%
+# Read Error Rate               0.577855%         0.577855%
+
+
+# GenomeScope version 1.0
+# k = 31
+
+# property                      min               max
+# Heterozygosity                -100%             -100%
+# Genome Haploid Length         -1 bp             -1 bp
+# Genome Repeat Length          -1 bp             -1 bp
+# Genome Unique Length          -1 bp             -1 bp
+# Model Fit                     0%                0%
+# Read Error Rate               -100%             -100%
+
+# Formula: y ~ (((2 * (1 - d) * (1 - (1 - r)^k)) + (2 * d * (1 - (1 - r)^k)^2) +
+#     (2 * d * ((1 - r)^k) * (1 - (1 - r)^k))) * dnbinom(x, size = kmercov/bias,
+#     mu = kmercov) * length + (((1 - d) * ((1 - r)^k)) + (d *
+#     (1 - (1 - r)^k)^2)) * dnbinom(x, size = kmercov * 2/bias,
+#     mu = kmercov * 2) * length + (2 * d * ((1 - r)^k) * (1 -
+#     (1 - r)^k)) * dnbinom(x, size = kmercov * 3/bias, mu = kmercov *
+#     3) * length + (d * (1 - r)^(2 * k)) * dnbinom(x, size = kmercov *
+#     4/bias, mu = kmercov * 4) * length)
+
+# Parameters:
+#          Estimate Std. Error t value Pr(>|t|)
+# d       7.392e-02  1.943e-04   380.6   <2e-16 ***
+# r       1.899e-02  5.764e-06  3294.7   <2e-16 ***
+# kmercov 1.519e+01  2.598e-03  5847.6   <2e-16 ***
+# bias    1.372e+00  1.676e-03   818.7   <2e-16 ***
+# length  3.550e+08  5.190e+04  6840.2   <2e-16 ***
+# ---
+# Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+# Residual standard error: 4282 on 47715 degrees of freedom
+
+# Number of iterations to convergence: 7
+# Achieved convergence tolerance: 6.21e-06

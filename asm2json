@@ -1,0 +1,309 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2020-2021 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use JSON;
+use XML::Simple;
+use Cwd;
+use File::Basename;
+
+# https://github.com/VGP/vgp-assembly/blob/master/VGP_specimen_naming_scheme.md
+my %groups = (
+        a => 'amphibians',
+        b => 'birds',
+        c => 'non-vascular-plants',
+        d => 'dicots',
+        e => 'echinoderms',
+        f => 'fish',
+        g => 'fungi',
+        h => 'platyhelminths',
+        i => 'insects',
+        j => 'jellyfish',
+        k => 'chordates',
+        l => 'monocots',
+        m => 'mammals',
+        n => 'nematodes',
+        o => 'sponges',
+        p => 'protists',
+        q => 'arthropods',
+        r => 'reptiles',
+        s => 'sharks',
+        t => 'ctenophores',
+        u => 'algae',
+        v => 'vascular-plants',
+        w => 'annelids',
+        x => 'molluscs',
+        y => 'bacteria',
+        z => 'archea',
+    );
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        my $res = parse_asmstats($opts, $_);
+        push(@$output, $res) if $res;
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        my $res = parse_asmstats($opts, $file);
+        push(@$output, $res) if $res;
+    }
+}
+print encode_json($output);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Extract stats from a asmstats report\n",
+        "Usage: asm2json <asmstats_file>\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, upload => 0, group => '', base => "$ENV{PWD}/", regex => '([^\/]+)/preqc/k\d+/(\S+).k\d+.summary.txt' };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub parse_asmstats
+{
+    my ($opts,$input) = @_;
+    $input = Cwd::abs_path($input);
+    my $base = basename($input);
+    my $dir = dirname($input);
+    my ($species_u,$specimen,$asm,$y,$m,$d,$stage) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})/([^\/]+)};
+    return '' unless ($species_u && $specimen && $asm && $y && $m && $d);
+    $asm .= ".$stage" unless ($stage eq $base);
+    $base =~ s/\.fa(sta)?(\.gz)?\.stats$//;
+    my $species = $species_u;
+    $species =~ s/_/ /g;
+    my $stats = { species => $species, species_u => $species_u, specimen => $specimen, asm => $asm, date => "$y-$m-$d", a => 0+0, c => 0+0, g => 0+0, t => 0+0, n => 0+0, cpg => 0+0 };
+
+    open(my $fh, "<$input") || die("Could not open $input");
+    while (<$fh>)
+    {
+        chomp;
+        if (/^A = \d+ \(([\d\.]+)\%\), C = \d+ \(([\d\.]+)\%\), G = \d+ \(([\d\.]+)\%\), T = \d+ \(([\d\.]+)\%\), N = \d+ \(([\d\.]+)\%\), CpG = \d+ \(([\d\.]+)\%\)/)
+        {
+            $$stats{a} = $1+0;
+            $$stats{c} = $2+0;
+            $$stats{g} = $3+0;
+            $$stats{t} = $4+0;
+            $$stats{n} = $4+0;
+            $$stats{cpg} = $4+0;
+        }
+        elsif (/^A = \d+ \(([\d\.]+)\%\), C = \d+ \(([\d\.]+)\%\), G = \d+ \(([\d\.]+)\%\), T = \d+ \(([\d\.]+)\%\)/)
+        {
+            $$stats{a} = $1+0;
+            $$stats{c} = $2+0;
+            $$stats{g} = $3+0;
+            $$stats{t} = $4+0;
+        }
+        elsif (/^sum = (\d+), n = (\d+), (ave|mean) = ([\d\.]+), largest = (\d+), smallest = (\d+)$/ || /^CONTIG\tsum = (\d+), n = (\d+), (ave|mean) = ([\d\.]+), largest = (\d+), smallest = (\d+)$/)
+        {
+            $$stats{contig_sum} = $1+0;
+            $$stats{contig_n} = $2+0;
+            $$stats{contig_mean} = $4+0;
+            $$stats{contig_largest} = $5+0;
+            $$stats{contig_smallest} = $6+0;
+        }
+        elsif (/^SCAFFOLD\tsum = (\d+), n = (\d+), (ave|mean) = ([\d\.]+), largest = (\d+), smallest = (\d+)$/)
+        {
+            $$stats{scaffold_sum} = $1+0;
+            $$stats{scaffold_n} = $2+0;
+            $$stats{scaffold_mean} = $4+0;
+            $$stats{scaffold_largest} = $5+0;
+            $$stats{scaffold_smallest} = $6+0;
+        }
+        elsif (/^N(\d+) = (\d+), L(\d+) = (\d+)$/ || /^CONTIG\tN(\d+) = (\d+), L(\d+) = (\d+)$/)
+        {
+            my $nx = "contig_N$1";
+            my $lx = "contig_L$1";
+            $$stats{$nx} = $2+0;
+            $$stats{$lx} = $4+0;
+        }
+        elsif (/^SCAFFOLD\tN(\d+) = (\d+), L(\d+) = (\d+)$/)
+        {
+            my $nx = "scaffold_N$1";
+            my $lx = "scaffold_L$1";
+            $$stats{$nx} = $2+0;
+            $$stats{$lx} = $4+0;
+        }
+        elsif (/^GAP\tsum = (\d+), n = (\d+), (ave|mean) = ([\d\.]+), largest = (\d+), smallest = (\d+)$/)
+        {
+            $$stats{gap_sum} = $1+0;
+            $$stats{gap_n} = $2+0;
+            $$stats{gap_mean} = $4+0;
+            $$stats{gap_largest} = $5+0;
+            $$stats{gap_smallest} = $6+0;
+        }
+    }
+    close($fh);
+    my (@buscos) = glob(qq[$dir/$base.*.busco/short_summary*$base*.busco.txt]);
+    foreach my $busco (@buscos)
+    {
+        my $res = parse_busco($busco);
+        push @{$$stats{busco}}, $res;
+    }
+    # my (@qv) = glob(qq[$dir/$base.*.10x.merqury/*.qv]);
+
+    my $plot;
+    # foreach my $label (qw(10x ccs 10x.kat/$specimen.spectra 10x.kat/$specimen ccs.kat/$specimen.spectra ccs.kat/$specimen))
+    foreach my $label (qw(10x ccs))
+    {
+        $plot = qq[$dir/$base.$label.kat/$specimen.spectra.png];
+        unless (-s $plot)
+        {
+            $plot = qq[$dir/$base.$label.kat/$specimen.png];
+            next unless (-s $plot);
+        }
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-${label}-kat-spectra"} = [ $plot, "KAT k-mer spectra plots for ".uc($label)." k-mers:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+        $plot = qq[$dir/$base.$label.kat/$specimen.stacked.spectra.png];
+        unless (-s $plot)
+        {
+            $plot = qq[$dir/$base.$label.kat/$specimen.stacked.png];
+            next unless (-s $plot);
+        }
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-${label}-kat-spectra-stacked"} = [ $plot, "KAT k-mer stacked spectra plots for ".uc($label)." k-mers:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    $plot = qq[$dir/coverage/cutoffs.png];
+    if (-s $plot)
+    {
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-purge-cutoffs"} = [ $plot, "Coverage cutoffs for purge_dups:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    $plot = qq[$dir/$specimen.p_utg.noseq.png];
+    if (-s $plot)
+    {
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-asmgraph"} = [ $plot, "Bandage plot of hifiasm primary unitig graph:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+
+# ./ilCraLigu1.p_ctg.10x.kat/ilCraLigu1.spectra.png
+# ./ilCraLigu1.p_ctg.10x.kat/ilCraLigu1.diploid.png
+# ./ilCraLigu1.p_ctg.10x.kat/ilCraLigu1.png
+# ./ilCraLigu1.p_ctg.ccs.kat/ilCraLigu1.spectra.png
+# ./ilCraLigu1.p_ctg.ccs.kat/ilCraLigu1.diploid.png
+# ./ilCraLigu1.p_ctg.ccs.kat/ilCraLigu1.png
+
+# ./purging/coverage/cutoffs.png
+# ./purging/gscope/reads.k31.plot.png
+# ./purging/gscope/reads.k31.plot.log.png
+
+    return $stats;
+}
+
+# # BUSCO version is: 3.0.0
+# # The lineage dataset is: insecta_odb9 (Creation date: 2016-02-13, number of species: 42, number of BUSCOs: 1658)
+# # To reproduce this run: python ...
+# #
+# # Summarized benchmarking in BUSCO notation for file ilCraLigu1.p_ctg.insecta.fa
+# # BUSCO was run in mode: genome
+
+#     C:98.5%[S:96.8%,D:1.7%],F:0.5%,M:1.0%,n:1658
+
+#     1633    Complete BUSCOs (C)
+#     1605    Complete and single-copy BUSCOs (S)
+#     28  Complete and duplicated BUSCOs (D)
+#     8   Fragmented BUSCOs (F)
+#     17  Missing BUSCOs (M)
+#     1658    Total BUSCO groups searched
+
+
+# # BUSCO version is: 5.0.0
+# # The lineage dataset is: eukaryota_odb10 (Creation date: 2020-09-10, number of species: 70, number of BUSCOs: 255)
+# # Summarized benchmarking in BUSCO notation for file ...
+# # BUSCO was run in mode: genome
+# # Gene predictor used: metaeuk
+
+#     ***** Results: *****
+
+#     C:91.8%[S:91.8%,D:0.0%],F:1.6%,M:6.6%,n:255
+#     234 Complete BUSCOs (C)
+#     234 Complete and single-copy BUSCOs (S)
+#     0   Complete and duplicated BUSCOs (D)
+#     4   Fragmented BUSCOs (F)
+#     17  Missing BUSCOs (M)
+#     255 Total BUSCO groups searched
+
+sub parse_busco
+{
+    my ($busco) = @_;
+    my $res;
+    open(my $fh, "<$busco") || die("Could not open file [$busco]");
+    while (<$fh>)
+    {
+        chomp;
+        if (/BUSCO version is: ([\d\.]+)/) { $$res{version} = $1; next; }
+        if (/The lineage dataset is: (\S+)/) { $$res{lineage} = $1; next; }
+        if (/(C:\S+)/) { $$res{busco} = $1; next; }
+        if (/(\d+).+\(([CSDFM])\)/) { $$res{$2} = $1+0; next; }
+        if (/(\d+).+Total BUSCO groups searched/) { $$res{n} = $1+0; next; }
+    }
+    close($fh);
+    return $res;
+}

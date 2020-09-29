@@ -1,0 +1,217 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Temp qw/ tempfile tempdir /;
+
+my $illumina_json = `for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name genomic_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -iname "*_F0xB00.stats"; done | bamstats2json -b $ENV{TOLQCROOT}/data/ -p`;
+
+my ($fh, $filename) = tempfile();
+print $fh (qq[
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <base href="https://tolqc.cog.sanger.ac.uk/">
+        <meta charset="utf-8">
+        <title>Tree of Life QC: Illumina Report</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.0/cosmo/bootstrap.min.css" media="screen">
+        <link rel="stylesheet" href="https://bootswatch.com/_assets/css/custom.min.css">
+        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.css">
+        <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script>
+        <!-- <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.js"></script>
+        <script src="https://bootswatch.com/_assets/js/custom.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+    </head>
+    <body>
+        <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
+            <div class="container-fluid">
+                <a href="/index.html" class="navbar-brand">Tree of Life QC</a>
+                <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+            </div>
+        </div>
+
+
+        <div class="container-fluid">
+             <div class="page-header" id="banner">
+                <div class="row">
+                    <div class="col-lg-8 col-md-7 col-sm-6">
+                        <h1>Illumina run report</h1>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" id="illumina">
+                <div id="toolbar">
+                    <button id="button" class="btn btn-secondary">show all plots</button>
+                    <button id="button2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="illumina_table" style="width: auto"
+                        data-pagination="true"
+                        data-search="true"
+                        data-sort-name="date"
+                        data-search-align="left"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-sort-order="desc"
+                        data-detail-view="true"
+                        data-detail-view-icon="false"
+                        data-detail-view-by-click="true"
+                        data-detail-formatter="illumina_image_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="group" data-sortable="true">group</th>
+                            <th data-field="type" data-sortable="true">source</th>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="platform" data-sortable="true" data-visible="false">platform</th>
+                            <th data-field="model" data-sortable="true" data-visible="false">model</th>
+                            <th data-field="run" data-sortable="true" data-formatter="illumina_run_formatter">run id</th>
+                            <th data-field="reads_paired" data-align='right' data-sortable="true" data-formatter="local_formatter">read pairs</th>
+                            <th data-field="total_length" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
+                            <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
+                            <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
+                            <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
+                            <th data-field="sanger_id" data-sortable="true">sanger id</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
+                            <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
+                            <th data-field="run_qc_status" data-sortable="true" data-cell-style="illumina_cell_status_style">run status</th>
+                            <th data-field="npg_qc_status" data-sortable="true" data-visible="false">npg status</th>
+                            <th data-field="date" data-sortable="true">date</th>
+                            <th data-field="species" data-sortable="true" data-formatter="species_link_formatter">species</th>
+                            <th data-field="species_lims" data-sortable="true" data-formatter="species_link_formatter" data-visible="false">species (lims)</th>
+                            <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <div class="footer">
+                    <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
+                    <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
+                    at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
+                    Copyright &copy; 2020 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
+            </div>
+        </div>
+
+        <script type="text/javascript">
+
+        \$(document).on('click', '[data-toggle="lightbox"]', function(event) {
+            event.preventDefault();
+            \$(this).ekkoLightbox();
+        });
+
+        function taxon_link_formatter(value, row) {
+            return '<a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id='+value+'">'+value+'</a>';
+        }
+
+        function species_link_formatter(value, row) {
+            if (value) {
+                var _name = value.replace(/ /g, "_");
+                return '<i><a href="'+row.group+'/'+_name+'/index.html">'+value+'</a></i>';
+            } else {
+                return value;
+            }
+        }
+
+        function illumina_image_formatter(index, row) {
+            var illumina_plots = '';
+            var x;
+            for (x in row) {
+                if (x.match(/^plot/)) {
+                    var img = encodeURIComponent(row[x]);
+                    illumina_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' samtools stats plots" data-toggle="lightbox" data-gallery="illumina'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return illumina_plots;
+        }
+        function illumina_cell_status_style(value, row, index) {
+            if (row.npg_qc_status)
+            {
+                if (row.npg_qc_status==0) {
+                    return {
+                        classes: 'bg-danger'
+                    }
+                }
+                return {
+                    classes: 'bg-success'
+                }
+            }
+            return {
+                classes: 'bg-warning'
+            }
+        }
+        function gs_rep_formatter(value, row) {
+            var rep = value>0 ? 100*value/row.max.len : 0;
+            return dec2_formatter(rep);
+        }
+        function local_formatter(value) {
+            return value.toLocaleString();
+        }
+        function dec2_formatter(value) {
+            return parseFloat(value).toFixed(2);
+        }
+        function info_formatter(value) {
+            return '<strong>' + value + '</strong>';
+        }
+        function illumina_run_formatter(value) {
+            var run = value.match(/^[0-9]+/);
+            return '<a href="http://sfweb.internal.sanger.ac.uk:9000/perl/npg/run/'+run+'">'+value+'</a>';
+        }
+        function species_link_formatter(value, row) {
+            if (value) {
+                var _name = value.replace(/ /g, "_");
+                return '<i><a href="'+row.group+'/'+_name+'/index.html">'+value+'</a></i>';
+            }
+            return value;
+        }
+        function biosample_formatter(value) {
+            if (value) {
+                if (value.match(/^SAM/)) {
+                    return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
+                }
+                return value;
+            }
+            return "-";
+        }
+
+        var \$button = \$('#button')
+        var \$button2 = \$('#button2')
+
+        \$(function() {
+            \$button.click(function () {
+                \$('#illumina_table').bootstrapTable('expandAllRows')
+            })
+            \$button2.click(function () {
+                \$('#illumina_table').bootstrapTable('collapseAllRows')
+            })
+        })
+
+        var illumina = $illumina_json;
+        \$('#illumina_table').bootstrapTable({data: illumina});
+
+        </script>
+    </body>
+</html>
+]);
+close($fh);
+
+system(qq[s3cmd --quiet put $filename s3://tolqc/illumina.html && s3cmd --quiet setacl --acl-public s3://tolqc/illumina.html]);
+
+exit;
