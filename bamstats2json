@@ -148,7 +148,7 @@ sub run2lims
     # 18 study_name
     # 19 manual_qc
     my $track = qq[$ENV{TOLQCROOT}/track];
-    my $lims = -s "$track/tol_illumina_data.lims.tsv.part" ? "$track/tol_illumina_data.lims.tsv.part" : "$track/tol_illumina_data.lims.tsv";
+    my $lims = -s "$track/tol_illumina_data.fofn.part" ? "$track/tol_illumina_data.fofn.part" : "$track/tol_illumina_data.fofn";
     open my $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$13=="$position" && \$14=="$tag_index"' $lims | sed 's/NULL//g' |];
     while (<$fh>)
     {
@@ -179,13 +179,13 @@ sub parse_bamstats
     my $species = $$opts{species};
     unless ($species)
     {
-        ($species) = $input =~ m{/([^\/]+)/genomic_data};
+        ($species) = $input =~ m{/([^\/]+)/(genomic|transcriptomic)_data};
         $species =~ s/_/ /g;
     }
     my $group = $$opts{group};
     unless ($group)
     {
-        ($group) = $input =~ m{([^\/]+/[^\/]+)/[^\/]+/genomic_data};
+        ($group) = $input =~ m{([^\/]+/[^\/]+)/[^\/]+/(genomic|transcriptomic)_data};
     }
 
     my $dir = dirname($input);
@@ -225,7 +225,20 @@ sub parse_bamstats
     $$hash{specimen} = $specimen if ($specimen);
     $$hash{group} = $group if ($group);
     $$hash{species} = $species if ($species);
+    $$hash{species_name} = $species if ($species);
     $$hash{platform} = 'Illumina';
+
+    my $bold = $input;
+    $bold =~ s/_F0xB00\.stats$/.m0.cov/;
+    $bold =~ s/stats/coi/;
+    if (-s $bold)
+    {
+        my $match = bold2json($bold);
+        if (exists $$match{match})
+        {
+            $$hash{match} = [ $$match{match}->[0] ];
+        }
+    }
 
     # 33254_3#6/33254_3#6_F0xB00-acgt-cycles.png
     # 33254_3#6/33254_3#6_F0xB00-gc-content.png
@@ -259,4 +272,40 @@ sub parse_bamstats
         }
     }
     return $hash;
+}
+
+
+sub bold2json
+{
+    my ($lambda) = @_;
+    my $bold = {};
+    open(my $fh, "<$lambda") || die("Could not read from '$lambda'");
+    while(<$fh>)
+    {
+        my ($read,$idstring,$identity) = split /\t/;
+        my ($id,$species,$marker) = split(/\|/,$idstring);
+        $species =~ s/_/ /g;
+        my $record = {
+            'database' => 'BOLD: Public Records',
+            'ID' => "$id",
+            'sequencedescription' => "$marker",
+            'taxonomicidentification' => "$species",
+            'similarity' => $identity / 100.0,
+            'specimen' => {
+            'collectionlocation' => {
+                    'country' => {},
+                    'coord' => {
+                        'lat' => {},
+                        'lon' => {}
+                    }
+                },
+                'url' => "http://www.boldsystems.org/index.php/Public_RecordView?processid=$id"
+            },
+            'citation' => 'BOLD Systems, 2020'
+        };
+        push @{$$bold{match}}, $record;
+        last;
+    }
+    close($fh);
+    return $bold;
 }
