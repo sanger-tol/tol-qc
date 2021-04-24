@@ -127,6 +127,11 @@ sub run2lims
         ($id_run,$position) = $run =~ m/(\d+)_(\d+)/;
         $tag_index = 'NULL';
     }
+    unless ($id_run)
+    {
+        ($id_run,$tag_index) = $run =~ m/(\d+)#(\d+)/;
+        $position = 'NULL';
+    }
     return \%hash unless $id_run;
     #  1 public_name
     #  2 common_name
@@ -179,13 +184,13 @@ sub parse_bamstats
     my $species = $$opts{species};
     unless ($species)
     {
-        ($species) = $input =~ m{/([^\/]+)/(genomic|transcriptomic)_data};
+        ($species) = $input =~ m{/([^\/]+)/(genomic|transcriptomic|resequencing)_data};
         $species =~ s/_/ /g;
     }
     my $group = $$opts{group};
     unless ($group)
     {
-        ($group) = $input =~ m{([^\/]+/[^\/]+)/[^\/]+/(genomic|transcriptomic)_data};
+        ($group) = $input =~ m{([^\/]+/[^\/]+)/[^\/]+/(genomic|transcriptomic|resequencing)_data};
     }
 
     my $dir = dirname($input);
@@ -284,6 +289,7 @@ sub bold2json
     {
         my ($read,$idstring,$identity) = split /\t/;
         my ($id,$species,$marker) = split(/\|/,$idstring);
+        next unless ($id && $species && $marker);
         $species =~ s/_/ /g;
         my $record = {
             'database' => 'BOLD: Public Records',
