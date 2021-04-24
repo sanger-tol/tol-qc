@@ -94,6 +94,7 @@ print $fh (qq[
                             <th data-field="species" data-sortable="true" data-formatter="species_link_formatter">species</th>
                             <th data-field="species_lims" data-sortable="true" data-formatter="species_link_formatter" data-visible="false">species (lims)</th>
                             <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
+                            <th data-field="barcode" data-align='right' data-sortable="true" data-formatter="bold_topmatch_formatter" data-cell-style="cellStyle">barcode</th>
                         </tr>
                     </thead>
                 </table>
@@ -189,6 +190,45 @@ print $fh (qq[
                 return value;
             }
             return "-";
+        }
+        function cellStyle(value, row, index) {
+            if (row.match && row.species_name)
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return {
+                        classes: 'bg-danger'
+                    }
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return {
+                        classes: 'bg-warning'
+                    }
+                } else {
+                    return {
+                        classes: 'bg-success'
+                    }
+                }
+            }
+            return {
+                classes: 'bg-warning'
+            }
+        }
+        function bold_topmatch_formatter(value, row) {
+            if (row.match && row.species_name)
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                } else {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                }
+            } else {
+                return '-';
+            }
         }
 
         var \$button = \$('#button')
