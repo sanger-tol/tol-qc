@@ -27,9 +27,22 @@ use warnings;
 use Carp;
 use Getopt::Long;
 use JSON;
+use DBI;
+use Number::Format 'format_number';
 
 my $opts = parse_params();
-status($opts);
+if ($$opts{input} eq '-')
+{
+    while(my $specimen = <>)
+    {
+        chomp $specimen;
+        status($opts,$specimen);
+    }
+}
+else
+{
+    status($opts,$$opts{input});
+}
 
 exit;
 
@@ -58,12 +71,14 @@ sub error
 
 sub parse_params
 {
-    my $opts = { input => '-', kmer => 31, jira => 0 };
+    my $opts = { input => '-', kmer => 31, jira => 0, project => '*', group => '*' };
     while (defined(my $arg=shift(@ARGV)))
     {
         if ( $arg eq '-t' || $arg eq '--tech' ) { $$opts{tech} = shift(@ARGV); next; }
         if ( $arg eq '-c' || $arg eq '--comment' ) { $$opts{comment} = shift(@ARGV); next; }
         if ( $arg eq '-k' || $arg eq '--kmer' ) { $$opts{kmer} = shift(@ARGV); next; }
+        if ( $arg eq '-p' || $arg eq '--project' ) { $$opts{project} = shift(@ARGV); next; }
+        if ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
         if ( $arg eq '-j' || $arg eq '--jira' ) { $$opts{jira} = 1; next; }
         if ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
         if (scalar @ARGV == 0) { $$opts{input} = $arg; next; }
@@ -75,121 +90,175 @@ sub parse_params
 
 sub status
 {
-    my ($opts) = @_;
+    my ($opts,$specimen) = @_;
     my $tech = $$opts{tech};
-    while(<>)
+    if ($tech eq 'asm')
     {
-        my $specimen = $_;
-        chomp $specimen;
-        if ($tech eq 'asm')
+        my @asms = sort glob(qq[$ENV{TOLQCROOT}/data/*/*/*/working/$specimen.hifiasm.*/purging/purged.fa.gz]);
+        unless (@asms)
         {
-            my @asms = sort glob(qq[$ENV{TOLQCROOT}/data/*/*/*/working/$specimen.hifiasm.*/purging/purged.fa.gz]);
-            unless (@asms)
+            print STDERR qq[No assemblies found for specimen $specimen... skipping\n];
+            return;
+        }
+        my $asm = $asms[-1];
+        my $asm_json = `echo $asm.stats | asm2json -p`;
+        my $stats = decode_json($asm_json);
+        $stats = $stats->[0];
+        my $busco = exists $$stats{busco} ? $$stats{busco}[0]{busco} : '';
+        my $qv = exists $$stats{qv} ? $$stats{qv} : '';
+        my $completeness = exists $$stats{completeness} ? $$stats{completeness} : '';
+        if (exists $$stats{N50})
+        {
+            print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, $$stats{scaffold_N50} / 1e6, $$stats{scaffold_n}, $$stats{scaffold_largest} / 1e6, $$stats{scaffold_sum}/1e6, $busco, $qv, $completeness . "\n");
+        }
+        else
+        {
+            print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, "-", "-", $$stats{contig_largest} / 1e6 , $$stats{contig_sum} / 1e6, $busco, $qv, $completeness . "\n");
+        }
+    }
+    else
+    {
+        my ($dir) = glob(qq[$ENV{TOLQCROOT}/data/$$opts{project}/$$opts{group}/*/genomic_data/$specimen/$tech]);
+        unless ($dir)
+        {
+            print STDERR qq[No $tech data directory found for specimen $specimen... skipping\n];
+            return;
+        }
+        my ($species_dir,$tech_dir) = $dir =~ m/(\S+)\/(genomic_data\S+)$/;
+        chdir($species_dir);
+        my $gscope_json = `find $tech_dir -type f -name \*.summary.txt | gscope2json -p`;
+        my $gscope = decode_json($gscope_json);
+        my $data;
+        if ($tech eq 'pacbio')
+        {
+            my $pacbio_json = `find $tech_dir -type f -name \*ccs\*.stats | pbstats2json -p`;
+            $data = decode_json($pacbio_json);
+        }
+        else
+        {
+            my $illumina_json = `find $tech_dir -type f -name \*F0xB00.stats | bamstats2json -p`;
+            $data = decode_json($illumina_json);
+        }
+        # use Data::Dumper;
+        # print STDERR Dumper($data);
+
+        my $yield = 0;
+        my $reads = 0;
+        my %runs;
+        my %sanger_ids;
+        my $last_date = '1900-01-01';
+        if ($tech eq 'pacbio')
+        {
+            foreach my $run (@$data)
             {
-                print STDERR qq[No assemblies found for specimen $specimen... skipping\n];
-                next;
-            }
-            my $asm = $asms[-1];
-            my $asm_json = `echo $asm.stats | asm2json -p`;
-            my $stats = decode_json($asm_json);
-            $stats = $stats->[0];
-            my $busco = exists $$stats{busco} ? $$stats{busco}[0]{busco} : '';
-            my $qv = exists $$stats{qv} ? $$stats{qv} : '';
-            my $completeness = exists $$stats{completeness} ? $$stats{completeness} : '';
-            if (exists $$stats{N50})
-            {
-                print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, $$stats{scaffold_N50} / 1e6, $$stats{scaffold_n}, $$stats{scaffold_largest} / 1e6, $$stats{scaffold_sum}/1e6, $busco, $qv, $completeness . "\n");
-            }
-            else
-            {
-                print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, "-", "-", $$stats{contig_largest} / 1e6 , $$stats{contig_sum} / 1e6, $busco, $qv, $completeness . "\n");
+                $last_date = $$run{date} if ($$run{date} gt $last_date);
+                $yield += $$run{sum};
+                $reads += $$run{n};
+                $runs{"$$run{run}/$$run{well_label}"} = 1 if (exists $$run{run} && exists $$run{well_label});
+                $sanger_ids{$$run{sanger_id}} = 1;
             }
         }
         else
         {
-            my ($dir) = glob(qq[$ENV{TOLQCROOT}/data/*/*/*/genomic_data/$specimen/$tech]);
-            unless ($dir)
+            foreach my $run (@$data)
             {
-                print STDERR qq[No $tech data directory found for specimen $specimen... skipping\n];
-                next;
+                $last_date = $$run{date} if (exists $$run{date} && $$run{date} gt $last_date);
+                $yield += $$run{total_length};
+                $reads += $$run{reads_paired};
+                my ($runid) = $$run{run} =~ m/(\d+)/;
+                $runs{$runid} = 1;
+                $sanger_ids{$$run{sanger_id}} = 1 if (exists $$run{sanger_id});
             }
-            my ($species_dir,$tech_dir) = $dir =~ m/(\S+)\/(genomic_data\S+)$/;
-            chdir($species_dir);
-            my $gscope_json = `find $tech_dir -type f -name \*.summary.txt | gscope2json -p`;
-            my $gscope = decode_json($gscope_json);
-            my $data;
-            if ($tech eq 'pacbio')
-            {
-                my $pacbio_json = `find $tech_dir -type f -name \*ccs\*.stats | pbstats2json -p`;
-                $data = decode_json($pacbio_json);
-            }
-            else
-            {
-                my $illumina_json = `find $tech_dir -type f -name \*F0xB00.stats | bamstats2json -p`;
-                $data = decode_json($illumina_json);
-            }
+        }
+        my $size = 0;
+        my $cov = 0;
+        my $het = 0;
+        my $rep = 0;
+        my $fit = 0;
+        my $err = 0;
+        foreach my $gs (@$gscope)
+        {
+            next unless ($$gs{k} eq $$opts{kmer});
+            $cov = $$gs{kcov}*2;
+            $size = $$gs{max}{len};
+            $rep = $$gs{max}{rep};
+            $het = $$gs{max}{het};
+            $fit = $$gs{max}{fit};
+            $err = $$gs{max}{err};
+        }
+        if ($$opts{jira})
+        {
+            my @samples = sort keys %sanger_ids;
+            my $taxon_id = get_taxon_id($samples[0]);
+            my $goat = $taxon_id ? get_goat_size($taxon_id) : {};
 
-            my $yield = 0;
-            my $reads = 0;
-            my %runs;
-            if ($tech eq 'pacbio')
+            my $yield_txt = int( $yield / 1e9 );
+            my $size_txt = int( $size / 1e6 );
+            my $cov_txt = int( $cov );
+            my $runs_txt = join ',', sort keys %runs;
+            $runs_txt = $runs_txt =~ /,/ ? "runs $runs_txt" : "run $runs_txt";
+            my $sanger_ids_txt = join ',', @samples;
+            print qq[$specimen\t${yield_txt}G so far from $runs_txt ($sanger_ids_txt).];
+            if ($cov_txt && $size_txt && $size_txt > 100)
             {
-                foreach my $run (@$data)
-                {
-                    $yield += $$run{sum};
-                    $reads += $$run{n};
-                    $runs{"$$run{run}/$$run{well_label}"} = 1 if (exists $$run{run} && exists $$run{well_label});
-                }
+                print qq[ Current coverage estimate: ${cov_txt}x and genome size estimate from data: ${size_txt}M.];
             }
             else
             {
-                foreach my $run (@$data)
-                {
-                    $yield += $$run{total_length};
-                    $reads += $$run{reads_paired};
-                    my ($runid) = $$run{run} =~ m/(\d+)/;
-                    $runs{$runid} = 1;
-                }
+                print qq[ Not enough data for coverage and genome size estimates from data.];
             }
-            my $size = 0;
-            my $cov = 0;
-            my $het = 0;
-            my $rep = 0;
-            my $fit = 0;
-            my $err = 0;
-            foreach my $gs (@$gscope)
+            if ($$goat{size})
             {
-                next unless ($$gs{k} eq $$opts{kmer});
-                $cov = $$gs{kcov}*2;
-                $size = $$gs{max}{len};
-                $rep = $$gs{max}{rep};
-                $het = $$gs{max}{het};
-                $fit = $$gs{max}{fit};
-                $err = $$gs{max}{err};
+                my $goat_cov = int( $yield / $$goat{size} );
+                $$goat{size} = format_number( int( $$goat{size} / 1e6 ) );
+                print qq[ GOAT coverage estimate: ${goat_cov}x based on yield and GOAT genome size: $$goat{size}M ($$goat{source}).];
             }
-            if ($$opts{jira})
+            print "\n";
+        }
+        else
+        {
+            if ($cov)
             {
-                my $yield_txt = int( $yield / 1e9 );
-                my $size_txt = int( $size / 1e6 );
-                my $cov_txt = int( $cov );
-                my $runs_txt = join ',', sort keys %runs;
-                print qq[$specimen\t${yield_txt}G so far from runs $runs_txt. Current coverage estimate: ${cov_txt}x and genome size estimate from data: ${size_txt}M\n];
+                # print join "\t", ($specimen, $$opts{kmer}, $size/1e6, $het, 100 * $rep / $size, $cov, "$fit", "$err");
+                print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov, "", "",$last_date);
+                print "\n"
             }
             else
             {
-                if ($cov)
-                {
-                    # print join "\t", ($specimen, $$opts{kmer}, $size/1e6, $het, 100 * $rep / $size, $cov, "$fit", "$err");
-                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov);
-                    print "\n"
-                }
-                else
-                {
-                    # print join "\t", ($specimen, $$opts{kmer}, 0, 0, 0, 0, 0, 0);
-                    print join "\t", ($specimen, 0, 0, 0, 0);
-                    print "\n"
-                }
+                # print join "\t", ($specimen, $$opts{kmer}, 0, 0, 0, 0, 0, 0);
+                print join "\t", ($specimen, 0, 0, 0, 0, "", "", $last_date);
+                print "\n"
             }
         }
-        }
+    }
+}
+
+sub get_taxon_id
+{
+    my ($sanger_id) = @_;
+    unless (exists $ENV{WAREHOUSE_DATABASE} && exists $ENV{WAREHOUSE_HOST} && exists $ENV{WAREHOUSE_PORT} && exists $ENV{WAREHOUSE_USER})
+    {
+        die("WARHOUSE environment variables must be set");
+    }
+    my $dbh = DBI->connect(qq[DBI:mysql:$ENV{WAREHOUSE_DATABASE};host=$ENV{WAREHOUSE_HOST};port=$ENV{WAREHOUSE_PORT}],qq[$ENV{WAREHOUSE_USER}]) or die($DBI::errstr);
+    my $qh = $dbh->prepare("select taxon_id from current_samples where name = ?");
+    $qh->execute($sanger_id) or die($DBI::errstr);
+    my @row = ('');
+    @row = $qh->fetchrow_array();
+    if (@row)
+    {
+        @row = map { defined $_ ? $_ : '' } @row;
+    }
+    return $row[0];
+}
+
+sub get_goat_size
+{
+    my ($taxon_id) = @_;
+    my $goat_json = `curl -sS -X GET "https://goat.genomehubs.org/api/v0.0.1/record?recordId=$taxon_id&result=taxon" -H "accept: application/json" | jq -c .`;
+    chomp $goat_json;
+    my $goat = decode_json($goat_json);
+    my $size = exists $$goat{records}->[0]{record}{attributes}{genome_size} ? int($$goat{records}->[0]{record}{attributes}{genome_size}{value} ) : '';
+    my $source = $size ? $$goat{records}->[0]{record}{attributes}{genome_size}{aggregation_source} : '';
+    return { size => $size, source => $source};
 }

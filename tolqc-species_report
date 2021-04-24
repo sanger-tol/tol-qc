@@ -58,26 +58,32 @@ my $root = qq[$ENV{TOLQCROOT}];
 while(my $dir = <>)
 {
     chomp $dir;
-    unless (-d $dir)
+    if (-d $dir)
+    {
+        make_report($dir);
+    }
+    else
     {
         # If the input is not a directory, assume it is a species
         # name and look for the project directory with that species
         $dir =~ s/ /_/g;
         my @projects = glob(qq[$root/data/*/*/$dir]);
-        if (scalar @projects == 1)
+        foreach my $project (@projects)
         {
-            $dir = $projects[0];
-        }
-        else
-        {
-            print STDERR scalar @projects . " project directories found for $dir... skipping\n";
-            next;
+            make_report($project);
         }
     }
-    $dir =~ s/\/(genomic_data|working|release).+$//;
+}
+
+exit;
+
+sub make_report
+{
+    my ($dir) = @_;
+    $dir =~ s/\/(genomic_data|transcriptomic_data|working|release).+$//;
 
     # make a minimal attempt to check the requested directory is indeed a ToLQC directory
-    unless (-d qq[$dir/genomic_data] || -d qq[$dir/working])
+    unless (-d qq[$dir/genomic_data] || -d qq[$dir/transcriptomic_data] || -d qq[$dir/working])
     {
         print "Directory [$dir] does not appear to have the structure expected by ToLQC... skipping\n";
         next;
@@ -137,8 +143,6 @@ while(my $dir = <>)
     sleep(2);
 }
 
-exit;
-
 sub get_sts_record
 {
     my ($species,$specimens) = @_;
@@ -175,7 +179,7 @@ sub get_specimens
     my ($species,$project) = @_;
     my $species_u = $species;
     $species_u  =~ s/ /_/g;
-    my @dirs = glob( "$root/data/$project/$species_u/genomic_data/*" );
+    my @dirs = glob( "$root/data/$project/$species_u/*_data/*" );
     return [] unless @dirs; # no specimens found
 
     my @specimens;
@@ -244,11 +248,12 @@ sub generate_html
         $species_img = qq[<img src="$$data{_name}.png" />];
         system(qq[s3cmd --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
     }
-    my $illumina_json = `find genomic_data -type f -name \*F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"`;
-    my $gscope_json = `find genomic_data -type f -name \*.summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"`;
-    my $pacbio_json = `find genomic_data -type f -name \*ccs\*.stats | pbstats2json -p -u`;
-    my $asm_json = -s 'working' ? `find working/ -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : '{}';
-    my $mashscreen_json = `find genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json`;
+    my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*ccs\*.stats | pbstats2json -p -u` : 'null';
+    my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
+    my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
@@ -263,7 +268,7 @@ sub generate_html
     my $goat_asm = $asm_size ? [ $asm_size, $$goat{records}->[0]{record}{attributes}{assembly_span}{aggregation_source} ] : ['unknown','unknown'];
     my $goat_chr = $chr_num ? [ $chr_num, $$goat{records}->[0]{record}{attributes}{chromosome_number}{aggregation_source} ] : ['unknown','unknown'];
 
-    my $specimens = `find genomic_data -maxdepth 1 -mindepth 1 -type d | cut -f2 -d"/" | sort -V | xargs echo | sed 's/ /,/g'`;
+    my $specimens = -d 'genomic_data' ? `find genomic_data -maxdepth 1 -mindepth 1 -type d | cut -f2 -d"/" | sort -V | xargs echo | sed 's/ /,/g'` : '';
     $$data{specimens} = $specimens;
     my $sts_json = encode_json($$data{sts});
 
@@ -387,15 +392,15 @@ sub generate_html
                         <td>$$taxon{lineage}</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/preview/records?taxon_id=$$taxon{taxId}&result=taxon">GoaT</a> genome size (M):</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon">GoaT</a> genome size (M):</th>
                         <td>$$goat_gs[0] ($$goat_gs[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/preview/records?taxon_id=$$taxon{taxId}&result=taxon">GoaT</a> asm span (M):</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon">GoaT</a> asm span (M):</th>
                         <td>$$goat_asm[0] ($$goat_asm[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/preview/records?taxon_id=$$taxon{taxId}&result=taxon">GoaT</a> chr no.:</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon">GoaT</a> chr no.:</th>
                         <td>$$goat_chr[0] ($$goat_chr[1])</td>
                     </tr>
               </tbody>
@@ -622,6 +627,54 @@ sub generate_html
                             <th data-field="date" data-sortable="true">date</th>
                             <th data-field="species" data-sortable="true" data-visible="false">species</th>
                             <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
+                            <th data-field="barcode" data-align='right' data-sortable="true" data-formatter="bold_topmatch_formatter" data-cell-style="cellStyle">barcode</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <!-- TRANSCRIPTOMIC -->
+            <h2><a name="transcriptomic_data">Transcriptomic data</a></h2>
+            <div class="section">
+            </div>
+
+            <h3><a name="rnaseq">RNA-seq run data</a></h3>
+            <p>Illumina run stats.</p>
+            <div class="section" id="rnaseq">
+                <div id="toolbar">
+                    <button id="button" class="btn btn-secondary">show all plots</button>
+                    <button id="button2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="rnaseq_table" style="width: auto"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-sort-order="asc"
+                        data-detail-view="true"
+                        data-detail-view-icon="false"
+                        data-detail-view-by-click="true"
+                        data-detail-formatter="illumina_image_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="type" data-sortable="true">source</th>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="run" data-sortable="true" data-formatter="illumina_run_formatter">run id</th>
+                            <th data-field="reads_paired" data-align='right' data-sortable="true" data-formatter="local_formatter">read pairs</th>
+                            <th data-field="total_length" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
+                            <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
+                            <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
+                            <th data-field="accession_number" data-sortable="true">sample_acc</th>
+                            <th data-field="sanger_id" data-sortable="true">sanger_id</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
+                            <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
+                            <th data-field="run_qc_status" data-sortable="true" data-cell-style="illumina_cell_status_style">run status</th>
+                            <th data-field="npg_qc_status" data-sortable="true" data-visible="false">npg status</th>
+                            <th data-field="date" data-sortable="true">date</th>
+                            <th data-field="species" data-sortable="true" data-visible="false">species</th>
+                            <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
                         </tr>
                     </thead>
                 </table>
@@ -659,6 +712,7 @@ sub generate_html
                             <th data-field="scaffold_n" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffolds</th>
                             <th data-field="length" data-sortable="true" data-formatter="length_formatter" data-align="right">length</th>
                             <th data-field="busco" data-sortable="true" data-formatter="busco_formatter">BUSCO</th>
+                            <!-- <th data-field="merqury" data-sortable="true" data-formatter="merqury_formatter" data-align="right">merqury</th> -->
                         </tr>
                     </thead>
                 </table>
@@ -801,8 +855,20 @@ sub generate_html
             }
             return "-"
         }
+        function merqury_formatter(value,row) {
+            ret = '';
+            if (row.merqury) {
+                ret+='Q'+dec1_formatter(row.merqury[0].primary.qv.value);
+                ret+='-C'+dec1_formatter(row.merqury[0].both.completeness.value);
+                ret+='.'+row.merqury[0].type;
+            }
+            return ret
+        }
         function dec2_formatter(value) {
             return parseFloat(value).toFixed(2);
+        }
+        function dec1_formatter(value) {
+            return parseFloat(value).toFixed(1);
         }
         function info_formatter(value) {
             return '<strong>' + value + '</strong>';
@@ -817,6 +883,22 @@ sub generate_html
             }
             return "-"
         }
+        function bold_topmatch_formatter(value, row) {
+            if (row.match && row.species_name)
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                } else {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                }
+            } else {
+                return '-';
+            }
+        }
 
         var taxon = $taxon_json;
         \$('#taxon_table').bootstrapTable({data: [ taxon ]});
@@ -824,14 +906,20 @@ sub generate_html
         var sts = $sts_json;
         \$('#sts_table').bootstrapTable({data: sts});
 
-        var gscope = $gscope_json;
-        \$('#gscope_table').bootstrapTable({data: gscope});
-
+        if ($gscope_json) {
+            var gscope = $gscope_json;
+            \$('#gscope_table').bootstrapTable({data: gscope});
+        }
         // document.getElementById("demo").innerHTML = '<div class="ibox float-e-margins"><table class="table table-striped noborder"><tbody><tr><td>Species</td><td>'+match2.species.taxonrep+' ('+match2.species.stats.publicmarkersequences["COI-5P"]+' COI-5P records)</td></tr><tr><td>Genus</td><td>'+match2.genus.taxonrep+' ('+match2.genus.stats.publicmarkersequences["COI-5P"]+' COI-5P records)</td></tr><tr><td>Read</td><td>'+match2.check.readname+':'+match2.check.from+'-'+match2.check.to+match2.check.strand+'</td></tr><tr><td colspan="2" valign="top"><div style="overflow-x:auto;white-space:pre-wrap;white-space: -moz-pre-wrap;white-space: -pre-wrap;white-space: -o-pre-wrap;word-wrap:break-word;">'+match2.check.nucleotides+'</div></td></tr></tbody></table></div>';
 
-        var illumina = $illumina_json;
-        \$('#illumina_table').bootstrapTable({data: illumina});
-
+        if ($illumina_json) {
+            var illumina = $illumina_json;
+            \$('#illumina_table').bootstrapTable({data: illumina});
+        }
+        if ($rnaseq_json) {
+            var rnaseq = $rnaseq_json;
+            \$('#rnaseq_table').bootstrapTable({data: rnaseq});
+        }
         var \$button = \$('#button')
         var \$button2 = \$('#button2')
 
@@ -843,12 +931,14 @@ sub generate_html
                 \$('#illumina_table').bootstrapTable('collapseAllRows')
             })
         })
-
-        var pacbio = $pacbio_json;
-        \$('#pacbio_table').bootstrapTable({data: pacbio});
-
-        var mashscreen = $mashscreen_json;
-        \$('#mashscreen_table').bootstrapTable({data: mashscreen});
+        if ($pacbio_json) {
+            var pacbio = $pacbio_json;
+            \$('#pacbio_table').bootstrapTable({data: pacbio});
+        }
+        if ($mashscreen_json) {
+            var mashscreen = $mashscreen_json;
+            \$('#mashscreen_table').bootstrapTable({data: mashscreen});
+        }
 
         if (pacbio && pacbio[0].match) {
             \$('#bold_table').bootstrapTable({data: pacbio[0].match});
@@ -869,9 +959,10 @@ sub generate_html
                 classes: 'bg-warning'
             }
         }
-
-        var asm = $asm_json;
-        \$('#asm_table').bootstrapTable({data: asm});
+        if ($asm_json) {
+            var asm = $asm_json;
+            \$('#asm_table').bootstrapTable({data: asm});
+        }
 
         function asm_image_formatter(index, row) {
             var asm_plots = '';

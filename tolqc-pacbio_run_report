@@ -83,8 +83,8 @@ print $fh (qq[
                             <th data-field="g" data-align='right' data-sortable="true" data-visible="false">G (&#37;)</th>
                             <th data-field="t" data-align='right' data-sortable="true" data-visible="false">T (&#37;)</th>
                             <th data-field="species_name" data-sortable="true" data-formatter="species_link_formatter">species</th>
-                            <th data-field="coi" data-align='right' data-sortable="true" data-sorter="similarity_sorter" data-formatter="bold_topmatch_formatter" data-cell-style="cellStyle">coi</th>
-                            <!-- <th data-field="coi" data-align='right' data-sortable="true" data-formatter="bold_modal_formatter">coi</th> -->
+                            <th data-field="barcode" data-align='right' data-sortable="true" data-sorter="similarity_sorter" data-formatter="bold_topmatch_formatter" data-cell-style="cellStyle">barcode</th>
+                            <!-- <th data-field="barcode" data-align='right' data-sortable="true" data-formatter="bold_modal_formatter">coi</th> -->
                             <!-- CCS report, LIMA report, chemistry, run-stats(P0,P1,P2), run date, instrument, movie-time, pre-ext, seqkit, bindingkit, reagentbox, cell-lot, loading-conc, pass/fail, totalGb, unique molecular yield, polymerase n50, ... -->
                         </tr>
                     </thead>
