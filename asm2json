@@ -191,7 +191,13 @@ sub parse_asmstats
         my $res = parse_busco($busco);
         push @{$$stats{busco}}, $res;
     }
-    # my (@qv) = glob(qq[$dir/$base.*.10x.merqury/*.qv]);
+    # my (@qvs) = glob(qq[$dir/$base.*.merqury/*.qv]);
+    # foreach my $qv (@qvs)
+    # {
+    #     next unless (-s $qv);
+    #     my $res = parse_merqury($qv);
+    #     push @{$$stats{merqury}}, $res;
+    # }
 
     my $plot;
     # foreach my $label (qw(10x ccs 10x.kat/$specimen.spectra 10x.kat/$specimen ccs.kat/$specimen.spectra ccs.kat/$specimen))
@@ -305,5 +311,38 @@ sub parse_busco
         if (/(\d+).+Total BUSCO groups searched/) { $$res{n} = $1+0; next; }
     }
     close($fh);
+    return $res;
+}
+
+
+sub parse_merqury
+{
+    my ($qv) = @_;
+    my ($type) = $qv =~ m/([^\.]+)\.qv$/;
+    my $res = { type => $type };
+    open(my $fh, "<$qv") || die("Could not open file [$qv]");
+    while (<$fh>)
+    {
+        chomp;
+        my @F = split /\t/;
+        $F[0] = 'both' if ($F[0] eq 'Both');
+        unless (exists $$res{primary})
+        {
+            $$res{primary}{qv} = { kunique => $F[1]+0, kboth => $F[2]+0, value => $F[3]+0, error => $F[4]+0 };
+        }
+        $$res{$F[0]}{qv} = { kunique => $F[1]+0, kboth => $F[2]+0, value => $F[3]+0, error => $F[4]+0 };
+    }
+    close($fh);
+
+    my $cmp = $qv;
+    $cmp =~ s/qv$/completeness.stats/;
+    open(my $fh1, "<$cmp") || die("Could not open file [$cmp]");
+    while (<$fh1>)
+    {
+        chomp;
+        my @F = split /\t/;
+        $$res{$F[0]}{completeness} = { set => $F[1], kasm => $F[2]+0, kreads => $F[3]+0, value => $F[4]+0 };
+    }
+    close($fh1);
     return $res;
 }
