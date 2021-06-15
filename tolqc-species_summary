@@ -223,7 +223,7 @@ sub generate_landing_page
     <body>
         <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
             <div class="container">
-                <a href="/index.html" class="navbar-brand">Tree of Life QC</a>
+                <a href="/" class="navbar-brand">Tree of Life QC</a>
                 <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
@@ -243,10 +243,11 @@ sub generate_landing_page
                 <div class="col-lg-8">
                 <div class="bs-component">
                     <div class="list-group list-group-horizontal">
-                        <a href="/illumina.html" class="list-group-item list-group-item-action">Illumina</a>
-                        <a href="/pacbio.html" class="list-group-item list-group-item-action">PacBio</a>
+                        <a href="/illumina/" class="list-group-item list-group-item-action">Illumina</a>
+                        <a href="/pacbio/" class="list-group-item list-group-item-action">PacBio</a>
+                        <a href="/rnaseq/" class="list-group-item list-group-item-action">RNA-seq</a>
                         <!-- <a href="/ccs.html" class="list-group-item list-group-item-action disabled">PacBio CCS</a> -->
-                        <a href="/ont.html" class="list-group-item list-group-item-action disabled">ONT</a>
+                        <a href="/ont/" class="list-group-item list-group-item-action disabled">ONT</a>
                     </div>
                 </div>
                 </div>
@@ -308,7 +309,7 @@ sub generate_landing_page
         }
 
         function species_link_formatter(value, row) {
-            return '<i><a href="'+row.group+'/'+row._name+'/index.html">'+value+'</a></i>';
+            return '<i><a href="'+row.group+'/'+row._name+'/">'+value+'</a></i>';
         }
 
         function status_formatter(value, row) {

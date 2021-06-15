@@ -220,7 +220,14 @@ sub status
             if ($cov)
             {
                 # print join "\t", ($specimen, $$opts{kmer}, $size/1e6, $het, 100 * $rep / $size, $cov, "$fit", "$err");
-                print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov, "", "",$last_date);
+                if ($tech eq 'pacbio')
+                {
+                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov, "", "",$last_date);
+                }
+                else
+                {
+                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, "", "", $cov,$last_date);
+                }
                 print "\n"
             }
             else

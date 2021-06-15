@@ -33,7 +33,7 @@ print $fh (qq[
     <body>
         <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
             <div class="container-fluid">
-                <a href="/index.html" class="navbar-brand">Tree of Life QC</a>
+                <a href="/" class="navbar-brand">Tree of Life QC</a>
                 <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
@@ -175,7 +175,7 @@ print $fh (qq[
         function species_link_formatter(value, row) {
             if (value) {
                 var _name = value.replace(/ /g, "_");
-                return '<i><a href="'+row.group+'/'+_name+'/index.html">'+value+'</a></i>';
+                return '<i><a href="'+row.group+'/'+_name+'/">'+value+'</a></i>';
             } else {
                 return value;
             }
@@ -210,6 +210,6 @@ print $fh (qq[
 ]);
 close($fh);
 
-system(qq[s3cmd --quiet put $filename s3://tolqc/pacbio.html && s3cmd --quiet setacl --acl-public s3://tolqc/pacbio.html]);
+system(qq[s3cmd --quiet --acl-public put $filename s3://tolqc/pacbio/index.html]);
 
 exit;

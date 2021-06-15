@@ -96,7 +96,7 @@ sub make_report
     $species =~ s/_/ /g;
     my $species_u = $species;
     $species_u  =~ s/ /_/g;
-    print STDERR "Generating ToLQC report for $species: https://tolqc.cog.sanger.ac.uk/$group/$species_u/index.html\n";
+    print STDERR "Generating ToLQC report for $species: https://tolqc.cog.sanger.ac.uk/$group/$species_u\n";
 
     my $spp = get_specimens($species,$group);
     my $sts = get_sts_record($species,$spp);
@@ -321,26 +321,26 @@ sub generate_html
     <body>
         <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
             <div class="container">
-                <a href="/index.html" class="navbar-brand">Tree of Life QC</a>
+                <a href="/" class="navbar-brand">Tree of Life QC</a>
                 <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="collapse navbar-collapse" id="navbarResponsive">
                     <ul class="navbar-nav">
                         <li class="nav-item">
-                            <a class="nav-link" href="index.html#info">Info</a>
+                            <a class="nav-link" href="#info">Info</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="index.html#specimens">Specimens</a>
+                            <a class="nav-link" href="#specimens">Specimens</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="index.html#spectra">Spectra</a>
+                            <a class="nav-link" href="#spectra">Spectra</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="index.html#genomic_data">Genomic Data</a>
+                            <a class="nav-link" href="#genomic_data">Genomic Data</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="index.html#asm">Assemblies</a>
+                            <a class="nav-link" href="#asm">Assemblies</a>
                         </li>
 <!--                         <li class="nav-item dropdown">
                             <a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#data" id="download">Data <span class="caret"></span></a>
@@ -572,7 +572,11 @@ sub generate_html
                         </div>
                         <div class="modal-body">
                             <!-- <p id="demo"></p> -->
-                            <table id="bold_table" class="table mx-auto w-auto" data-sort-order="asc" data-pagination="true">
+                            <table id="bold_table" class="table mx-auto w-auto"
+                                    data-sort-order="asc"
+                                    data-search="true"
+                                    data-search-align="left"
+                                    data-pagination="true">
                                 <thead>
                                     <tr>
                                         <th data-field="ID" data-sortable="true" data-formatter="bold_url_formatter">id</th>
@@ -994,6 +998,6 @@ sub generate_html
 </html>
     ]);
     close($fh);
-    system(qq[s3cmd --quiet put $filename s3://tolqc/$$data{group}/$$data{_name}/index.html && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/index.html]);
+    system(qq[s3cmd --quiet put --acl-public $filename s3://tolqc/$$data{group}/$$data{_name}/index.html]);
     return $data;
 }
