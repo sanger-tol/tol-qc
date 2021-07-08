@@ -4,8 +4,25 @@ use strict;
 use warnings;
 
 use File::Temp qw/ tempfile tempdir /;
+use JSON;
+use File::Basename;
 
 my $illumina_json = `for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name genomic_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -iname "*_F0xB00.stats"; done | bamstats2json -b $ENV{TOLQCROOT}/data/ -p`;
+
+my $accessions = load_accessions();
+my $illumina = decode_json($illumina_json);
+my $illumina_update;
+foreach my $rec (@$illumina)
+{
+    if (exists $$accessions{$$rec{run}})
+    {
+        $$rec{run_accession} = $$accessions{$$rec{run}}->{run};
+        $$rec{exp_accession} = $$accessions{$$rec{run}}->{exp};
+        $$rec{study_accession} = $$accessions{$$rec{run}}->{study};
+    }
+    push @{$illumina_update}, $rec;
+}
+$illumina_json = encode_json($illumina_update);
 
 my ($fh, $filename) = tempfile();
 print $fh (qq[
@@ -54,15 +71,16 @@ print $fh (qq[
             </div>
 
             <div class="section" id="illumina">
-                <div id="toolbar">
+                <div class="illuminatoolbar">
                     <button id="button" class="btn btn-secondary">show all plots</button>
                     <button id="button2" class="btn btn-secondary">hide all plots</button>
                 </div>
-                <table id="illumina_table" style="width: auto"
+                <table id="illumina_table" class="table table-sm"
                         data-pagination="true"
                         data-search="true"
                         data-sort-name="date"
                         data-search-align="left"
+                        data-buttons-align="left"
                         data-toggle="table"
                         data-show-toggle="true"
                         data-show-columns="true"
@@ -71,6 +89,8 @@ print $fh (qq[
                         data-detail-view="true"
                         data-detail-view-icon="false"
                         data-detail-view-by-click="true"
+                        data-toolbar=".illuminatoolbar"
+                        data-toolbar-align="right"
                         data-detail-formatter="illumina_image_formatter">
                     <thead>
                         <tr>
@@ -85,7 +105,10 @@ print $fh (qq[
                             <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
                             <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
                             <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
-                            <th data-field="sanger_id" data-sortable="true">sanger id</th>
+                            <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter">run accession</th>
+                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">exp accession</th>
+                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">study accession</th>
+                            <th data-field="sanger_id" data-sortable="true" data-visible="false">sanger id</th>
                             <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
                             <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
                             <th data-field="run_qc_status" data-sortable="true" data-cell-style="illumina_cell_status_style">run status</th>
@@ -155,7 +178,7 @@ print $fh (qq[
                 }
             }
             return {
-                classes: 'bg-warning'
+                classes: 'bg-success'
             }
         }
         function gs_rep_formatter(value, row) {
@@ -188,6 +211,12 @@ print $fh (qq[
                     return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
                 }
                 return value;
+            }
+            return "-";
+        }
+        function ena_formatter(value) {
+            if (value) {
+                return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
             }
             return "-";
         }
@@ -255,3 +284,21 @@ close($fh);
 system(qq[s3cmd --quiet --acl-public put $filename s3://tolqc/illumina/index.html]);
 
 exit;
+
+
+sub load_accessions
+{
+    my $accessions;
+    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
+    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    while(<$fh>)
+    {
+        chomp;
+        my ($file,$run,$exp,$study) = split /\t/;
+        $file = basename($file);
+        $file =~ s/\.(cr|b)am$//;
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+    }
+    close $fh;
+    return $accessions;
+}
