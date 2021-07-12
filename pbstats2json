@@ -122,10 +122,10 @@ sub parse_asmstats
     my $base = basename($input);
     my $movie = '';
     my $barcode = '';
-    ($movie,$barcode) = $base =~ m/([^\.]+)\.ccs\.([^\.]+)\.stats$/;
+    ($movie,undef,$barcode) = $base =~ m/([^\.]+)\.(ccs|subreads)\.([^\.]+)\.stats$/;
     unless ($movie)
     {
-        ($movie) = $base =~ m/([^\.]+)\.ccs\.stats$/;
+        ($movie) = $base =~ m/([^\.]+)\.(ccs|subreads)\.stats$/;
     }
     my ($instrument, $dt) = $movie =~ m/(m[^_]+)_(\d{6})_/;
     my @a = ( $dt =~ m/../g );
@@ -242,7 +242,7 @@ sub movie2lims
     my $hash = {};
     my $tolqc = $ENV{TOLQCROOT};
 
-    my ($subreadset_xml) = glob("$tolqc/seq/pacbio/*/*/$movie.subreadset.xml");
+    my ($subreadset_xml) = glob("$tolqc/seq/pacbio/*/*/$movie.*readset.xml");
     if ($subreadset_xml && -s $subreadset_xml)
     {
         my $subreadset = readXML($subreadset_xml);
@@ -289,7 +289,7 @@ sub movie2lims
                 $$hash{"plot-$base"} = [ qq[https://tolqc.cog.sanger.ac.uk/$img_path], "$labels{$base}" ];
                 if ($$opts{upload})
                 {
-                    system(qq[s3cmd put --quiet $img s3://tolqc/$img_path && s3cmd setacl --quiet --acl-public s3://tolqc/$img_path]);
+                    system(qq[s3cmd put --acl-public --quiet $img s3://tolqc/$img_path]);
                 }
             }
         }

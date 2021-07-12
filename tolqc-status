@@ -29,6 +29,7 @@ use Getopt::Long;
 use JSON;
 use DBI;
 use Number::Format 'format_number';
+use File::Basename;
 
 my $opts = parse_params();
 if ($$opts{input} eq '-')
@@ -105,15 +106,23 @@ sub status
         my $stats = decode_json($asm_json);
         $stats = $stats->[0];
         my $busco = exists $$stats{busco} ? $$stats{busco}[0]{busco} : '';
-        my $qv = exists $$stats{qv} ? $$stats{qv} : '';
-        my $completeness = exists $$stats{completeness} ? $$stats{completeness} : '';
+        my $qv = exists $$stats{merqury}{qv} ? $$stats{merqury}{qv} : '';
+        my $completeness = exists $$stats{merqury}{completeness} ? $$stats{merqury}{completeness} : '';
+        my $log = dirname( dirname $asm ) . "/$specimen.log";
+        my $version = '';
+        if (-s $log)
+        {
+            my $version_line = `grep "Version:" $log`; chomp $version_line;
+            ($version) = $version_line =~ m/M::main] Version: (\S+)$/;
+            $version = "hifiasm-$version+purge" if $version;
+        }
         if (exists $$stats{N50})
         {
-            print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, $$stats{scaffold_N50} / 1e6, $$stats{scaffold_n}, $$stats{scaffold_largest} / 1e6, $$stats{scaffold_sum}/1e6, $busco, $qv, $completeness . "\n");
+            print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, $$stats{scaffold_N50} / 1e6, $$stats{scaffold_n}, $$stats{scaffold_largest} / 1e6, $$stats{scaffold_sum}/1e6, $busco, $qv, $completeness, $version . "\n");
         }
         else
         {
-            print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, "-", "-", $$stats{contig_largest} / 1e6 , $$stats{contig_sum} / 1e6, $busco, $qv, $completeness . "\n");
+            print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, "-", "-", $$stats{contig_largest} / 1e6 , $$stats{contig_sum} / 1e6, $busco, $qv, $completeness, $version . "\n");
         }
     }
     else
@@ -217,28 +226,43 @@ sub status
         }
         else
         {
+            my $sts_cov = get_sts_cov($specimen, $yield);
             if ($cov)
             {
-                # print join "\t", ($specimen, $$opts{kmer}, $size/1e6, $het, 100 * $rep / $size, $cov, "$fit", "$err");
                 if ($tech eq 'pacbio')
                 {
-                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov, "", "",$last_date);
+                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date);
                 }
                 else
                 {
-                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, "", "", $cov,$last_date);
+                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date);
                 }
                 print "\n"
             }
             else
             {
-                # print join "\t", ($specimen, $$opts{kmer}, 0, 0, 0, 0, 0, 0);
-                print join "\t", ($specimen, 0, 0, 0, 0, "", "", $last_date);
+                if ($tech eq 'pacbio')
+                {
+                    print join "\t", ($specimen, "", "", "", "-", $sts_cov, "","", $last_date);
+                }
+                else
+                {
+                    print join "\t", ($specimen, "", "", "", "", "", "-",$sts_cov, $last_date);
+                }
                 print "\n"
             }
         }
     }
 }
+
+sub get_sts_cov
+{
+    my ($tolid, $yield) = @_;
+    return 0 unless $yield;
+    my $sts_size = `grep $tolid $ENV{TOLQCROOT}/track/tol_sts.tsv | awk '{print \$NF}' | head -1`; chomp $sts_size;
+    return $sts_size ? qq[=$yield/$sts_size] : "";
+}
+
 
 sub get_taxon_id
 {

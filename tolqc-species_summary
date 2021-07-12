@@ -11,81 +11,91 @@ use File::Temp qw/ tempfile tempdir /;
 die("Expected TOLQCROOT environment variable to be set") unless (exists $ENV{TOLQCROOT});
 my $root = qq[$ENV{TOLQCROOT}];
 
-my $list;
-open(my $fh, qq[find -L $root/data -mindepth 4 -maxdepth 4 -type d -name genomic_data | cut -d'/' -f7,8,9 |]);
-while(<$fh>)
-{
-    chomp;
-    my $species_u = basename($_);
-    my $group = dirname($_);
-    # next if ($species_u =~ /\./);
-    # print "$species_u\t$group\n";
-    my $species = $species_u;
-    $species =~ s/_/ /g;
-    # unless (`s3cmd ls s3://tolqc/$group/$species_u/index.html`)
-    # {
-    #     print STDERR qq[skipping "$species" as report does not exist at s3://tolqc/$group/$species_u/index.html\n];
-    #     next;
-    # }
 
-    my $spp = get_specimens($species,$group);
-    my $sts = get_sts_record($species,$spp);
-    if (scalar @$sts > 0)
+my $reports_json = gather_data($root);
+write_file_to_s3($reports_json,qq[s3://tolqc/data.json]);
+generate_landing_page();
+
+exit;
+
+sub gather_data
+{
+    my ($root) = @_;
+    my $list;
+    open(my $fh, qq[find -L $root/data -mindepth 4 -maxdepth 4 -type d -name genomic_data | cut -d'/' -f7,8,9 |]);
+    while(<$fh>)
     {
-        if ($$sts[0]->{scientific_name} ne $species)
-        {
-            print STDERR "WARN: STS records not found for species $species... ";
-            print STDERR "but specimen records found for $$sts[0]->{public_name} as species $$sts[0]->{scientific_name}\n";
-        }
-    }
-    else
-    {
-        print STDERR "WARN: STS records not found for species $species... ";
-        $sts = fake_sts_record($species,$spp);
+        chomp;
+        my $species_u = basename($_);
+        my $group = dirname($_);
+        # next if ($species_u =~ /\./);
+        # print "$species_u\t$group\n";
+        my $species = $species_u;
+        $species =~ s/_/ /g;
+        # unless (`s3cmd ls s3://tolqc/$group/$species_u/index.html`)
+        # {
+        #     print STDERR qq[skipping "$species" as report does not exist at s3://tolqc/$group/$species_u/index.html\n];
+        #     next;
+        # }
+
+        my $spp = get_specimens($species,$group);
+        my $sts = get_sts_record($species,$spp);
         if (scalar @$sts > 0)
         {
-            print STDERR "faking based on specimen names in genomic_data directory\n";
+            if ($$sts[0]->{scientific_name} ne $species)
+            {
+                print STDERR "WARN: STS records not found for species $species... ";
+                print STDERR "but specimen records found for $$sts[0]->{public_name} as species $$sts[0]->{scientific_name}\n";
+            }
         }
         else
         {
-            print STDERR "skipping\n";
-            next;
+            print STDERR "WARN: STS records not found for species $species... ";
+            $sts = fake_sts_record($species,$spp);
+            if (scalar @$sts > 0)
+            {
+                print STDERR "faking based on specimen names in genomic_data directory\n";
+            }
+            else
+            {
+                print STDERR "skipping\n";
+                next;
+            }
         }
-    }
 
-    my %specimens;
-    foreach my $specimen (@$sts)
-    {
-        $specimens{ $specimen->{public_name} }++;
+        my %specimens;
+        foreach my $specimen (@$sts)
+        {
+            $specimens{ $specimen->{public_name} }++;
+        }
+        $$sts[0]->{common_name} =~ s/^NA$//;
+        $$sts[0]->{common_name} =~ s/^UNKNOWN$//;
+        my $data = {
+            name        => $species,
+            _name       => $species_u,
+            common_name => $$sts[0]->{common_name},
+            taxon       => $$sts[0]->{taxon_id},
+            family      => ucfirst(lc($$sts[0]->{family})),
+            order       => ucfirst(lc($$sts[0]->{order_or_group})),
+            phylum      => ucfirst(lc($$sts[0]->{phylum})),
+            group       => $group,
+            specimens   => join(',', sort keys %specimens)
+        };
+        # if (-s qq[$root/status/$group/$species_u/status.json])
+        # {
+        #     my $status_json = `cat $root/status/$group/$species_u/status.json | jq -c .`;
+        #     $$data{status} = decode_json($status_json);
+        #     foreach my $tech (keys %{$$data{status}})
+        #     {
+        #         $$data{status}{hic} = $$data{status}{"$tech"} if ($tech =~ m/hic-/);
+        #     }
+        # }
+        push @$list, $data;
     }
-    $$sts[0]->{common_name} =~ s/^NA$//;
-    $$sts[0]->{common_name} =~ s/^UNKNOWN$//;
-    my $data = {
-        name        => $species,
-        _name       => $species_u,
-        common_name => $$sts[0]->{common_name},
-        taxon       => $$sts[0]->{taxon_id},
-        family      => ucfirst(lc($$sts[0]->{family})),
-        order       => ucfirst(lc($$sts[0]->{order_or_group})),
-        group       => $group,
-        specimens   => join(',', sort keys %specimens)
-    };
-    # if (-s qq[$root/status/$group/$species_u/status.json])
-    # {
-    #     my $status_json = `cat $root/status/$group/$species_u/status.json | jq -c .`;
-    #     $$data{status} = decode_json($status_json);
-    #     foreach my $tech (keys %{$$data{status}})
-    #     {
-    #         $$data{status}{hic} = $$data{status}{"$tech"} if ($tech =~ m/hic-/);
-    #     }
-    # }
-    push @$list, $data;
+    close($fh);
+    my $reports_json = encode_json($list);
+    return $reports_json;
 }
-close($fh);
-
-generate_landing_page($list);
-
-exit;
 
 sub get_sts_record
 {
@@ -147,7 +157,7 @@ sub fake_sts_record
     return [] if ($spp_json eq 'No results.');
     $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct" | jq -c .`;
     my $spp = decode_json($spp_json);
-    my $tx = ''; my $cn = ''; my $family = ''; my $order = '';
+    my $tx = ''; my $cn = ''; my $family = ''; my $order = ''; my $phylum = '';
     if (($spp && exists $spp->[0] && exists $spp->[0]->{taxId}))
     {
         my %rank;
@@ -170,22 +180,28 @@ sub fake_sts_record
         }
         $family = exists $rank{family} ? $rank{family} : '';
         $order = exists $rank{order} ? $rank{order} : '';
+        $phylum = exists $rank{phylum} ? $rank{phylum} : '';
     }
 
     my @sts;
     foreach my $specimen (@$specimens)
     {
-        push @sts, { public_name => $specimen, taxon_id => $tx, common_name => $cn, family => $family, order_or_group => $order  };
+        push @sts, { public_name => $specimen, taxon_id => $tx, common_name => $cn, family => $family, order_or_group => $order, phylum => $phylum  };
     }
     return \@sts;
 }
 
+sub write_file_to_s3
+{
+    my ($json,$file) = @_;
+    my ($fh, $jsonfile) = tempfile();
+    print $fh $json;
+    close($fh);
+    system(qq[s3cmd put --quiet --acl-public $jsonfile $file]);
+}
+
 sub generate_landing_page
 {
-    my ($list) = @_;
-
-    my $reports_json = encode_json($list);
-
     my ($fh, $filename) = tempfile();
     print $fh (qq[
 <!DOCTYPE html>
@@ -198,15 +214,20 @@ sub generate_landing_page
 
         <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.0/cosmo/bootstrap.min.css" media="screen">
         <link rel="stylesheet" href="https://bootswatch.com/_assets/css/custom.min.css">
-        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.css">
+        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.css">
         <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
 
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script>
-        <!-- <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
         <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
-        <script src="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+        <script src="https://cdn.jsdelivr.net/npm/tableexport.jquery.plugin\@1.10.21/tableExport.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/export/bootstrap-table-export.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/filter-control/bootstrap-table-filter-control.min.js"></script>
+
         <script src="https://bootswatch.com/_assets/js/custom.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
 
@@ -215,7 +236,7 @@ sub generate_landing_page
           height: 20px;
           width: 20px;
           background-color: #bbb;
-          border-radius: 50%;
+          border-radius: 50\%;
           display: inline-block;
         }
         </style>
@@ -264,13 +285,22 @@ sub generate_landing_page
             </div>
 
             <div class="section" id="reports">
-                <table id="reports_table" style="width: auto"
+                <table id="reports_table"
+                        data-url="data.json"
+                        data-show-export="true"
+                        data-export-data-type="all"
+                        data-export-types=['json','xml','csv','txt','excel']
                         data-pagination="true"
-                        data-toggle="table"
                         data-search="true"
-                        data-sort-name="name"
                         data-search-align="left"
-                        data-sort-order="asc">
+                        data-buttons-align="left"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-sort-name="name"
+                        data-sort-order="asc"
+                        data-toolbar-align="right">
                     <thead>
                         <tr>
                             <th data-field="group" data-sortable="true" data-filter-control="true">group</th>
@@ -279,6 +309,7 @@ sub generate_landing_page
                             <th data-field="taxon" data-sortable="true" data-formatter="taxon_link_formatter">taxon</th>
                             <th data-field="family" data-sortable="true">family</th>
                             <th data-field="order" data-sortable="true">order</th>
+                            <th data-field="phylum" data-sortable="true">phylum</th>
 <!--                             <th data-field="status.pacbio" data-sortable="true" data-align="center">PacBio</th>
                             <th data-field="status.10x" data-sortable="true" data-align="center">10XG</th>
                             <th data-field="status.hic" data-sortable="true" data-align="center">Hi-C</th>
@@ -297,7 +328,7 @@ sub generate_landing_page
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
                     at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
-                    Copyright &copy; 2020 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    Copyright &copy; 2020-2021 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
                     <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
             </div>
         </div>
@@ -329,5 +360,5 @@ sub generate_landing_page
 </html>
     ]);
     close($fh);
-    system(qq[s3cmd --quiet put $filename s3://tolqc/index.html && s3cmd --quiet setacl --acl-public s3://tolqc/index.html]);
+    system(qq[s3cmd put --quiet --acl-public $filename s3://tolqc/index.html]);
 }

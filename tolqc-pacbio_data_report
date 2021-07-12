@@ -2,9 +2,30 @@
 
 use strict;
 use warnings;
-use File::Temp qw/ tempfile tempdir /;
 
-my $pacbio_json = `for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name genomic_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*ccs\*.stats; done | pbstats2json -m -b $ENV{TOLQCROOT}/data/ -p`;
+use File::Temp qw/ tempfile tempdir /;
+use JSON;
+use File::Basename;
+
+my $pacbio_json = `for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name genomic_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*.stats; done | grep pacbio | pbstats2json -m -b $ENV{TOLQCROOT}/data/ -p`;
+
+my $accessions = load_accessions();
+my $pacbio = decode_json($pacbio_json);
+my $pacbio_update;
+foreach my $rec (@$pacbio)
+{
+    my $file = basename($$rec{input});
+    $file =~ s/\.stats$//;
+    if (exists $$accessions{$file})
+    {
+        $$rec{run_accession} = $$accessions{$file}->{run};
+        $$rec{exp_accession} = $$accessions{$file}->{exp};
+        $$rec{study_accession} = $$accessions{$file}->{study};
+    }
+    push @{$pacbio_update}, $rec;
+}
+$pacbio_json = encode_json($pacbio_update);
+write_file_to_s3($pacbio_json,qq[s3://tolqc/pacbio/data.json]);
 
 my ($fh, $filename) = tempfile();
 print $fh (qq[
@@ -18,15 +39,19 @@ print $fh (qq[
 
         <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.0/cosmo/bootstrap.min.css" media="screen">
         <link rel="stylesheet" href="https://bootswatch.com/_assets/css/custom.min.css">
-        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.css">
+        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.css">
         <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
 
         <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script>
-        <!-- <script src="https://unpkg.com/tableexport.jquery.plugin/tableExport.min.js"></script> -->
         <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
         <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
-        <script src="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+        <script src="https://cdn.jsdelivr.net/npm/tableexport.jquery.plugin\@1.10.21/tableExport.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/export/bootstrap-table-export.min.js"></script>
+
         <script src="https://bootswatch.com/_assets/js/custom.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
     </head>
@@ -51,11 +76,20 @@ print $fh (qq[
             </div>
 
             <div class="section" id="pacbio">
-                <table id="pacbio_table" style="width: auto"
+                <div class="pacbiotoolbar">
+                    <button id="button" class="btn btn-secondary">show all plots</button>
+                    <button id="button2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="pacbio_table" class="table table-sm"
+                    data-url="pacbio/data.json"
+                    data-show-export="true"
+                    data-export-data-type="all"
+                    data-export-types=['json','xml','csv','txt','excel']
                     data-pagination="true"
                     data-search="true"
-                    data-sort-name="date"
                     data-search-align="left"
+                    data-sort-name="date"
+                    data-buttons-align="left"
                     data-toggle="table"
                     data-show-toggle="true"
                     data-show-columns="true"
@@ -65,6 +99,8 @@ print $fh (qq[
                     data-detail-view="true"
                     data-detail-view-icon="false"
                     data-detail-view-by-click="true"
+                    data-toolbar=".pacbiotoolbar"
+                    data-toolbar-align="right"
                     data-detail-formatter="pacbio_image_formatter">
                     <thead>
                         <tr>
@@ -84,6 +120,9 @@ print $fh (qq[
                             <th data-field="tag_index" data-sortable="true">tag</th>
                             <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag sequence</th>
                             <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
+                            <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter">run accession</th>
+                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">exp accession</th>
+                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">study accession</th>
                             <th data-field="library_load_name" data-sortable="true" data-visible="false">library load name</th>
                             <th data-field="sum" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
                             <th data-field="N50" data-align='right' data-sortable="true" data-formatter="local_formatter">N50</th>
@@ -175,7 +214,7 @@ print $fh (qq[
                     return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
                 }
             }
-            return '-';
+            return '';
         }
         function taxon_link_formatter(value, row) {
             return '<a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id='+value+'">'+value+'</a>';
@@ -202,7 +241,7 @@ print $fh (qq[
             if (value) {
                 return value.toLocaleString();
             }
-            return '-';
+            return '';
         }
         function dec2_formatter(value) {
             return parseFloat(value).toFixed(2);
@@ -217,7 +256,13 @@ print $fh (qq[
                 }
                 return value;
             }
-            return "-"
+            return ""
+        }
+        function ena_formatter(value) {
+            if (value) {
+                return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+            }
+            return "";
         }
         function pacbio_image_formatter(index, row) {
             var pacbio_plots = '';
@@ -232,8 +277,17 @@ print $fh (qq[
             return pacbio_plots;
         }
 
-        var pacbio = $pacbio_json;
-        \$('#pacbio_table').bootstrapTable({data: pacbio});
+        var \$button = \$('#button')
+        var \$button2 = \$('#button2')
+
+        \$(function() {
+            \$button.click(function () {
+                \$('#pacbio_table').bootstrapTable('expandAllRows')
+            })
+            \$button2.click(function () {
+                \$('#pacbio_table').bootstrapTable('collapseAllRows')
+            })
+        })
 
         </script>
     </body>
@@ -244,3 +298,29 @@ close($fh);
 system(qq[s3cmd --quiet --acl-public put $filename s3://tolqc/pacbio/index.html]);
 
 exit;
+
+sub write_file_to_s3
+{
+    my ($json,$file) = @_;
+    my ($fh, $jsonfile) = tempfile();
+    print $fh $json;
+    close $fh;
+    system(qq[s3cmd --quiet --acl-public put $jsonfile $file]);
+}
+
+sub load_accessions
+{
+    my $accessions;
+    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
+    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    while(<$fh>)
+    {
+        chomp;
+        my ($file,$run,$exp,$study) = split /\t/;
+        $file = basename($file);
+        $file =~ s/\.(cr|b)am$//;
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+    }
+    close $fh;
+    return $accessions;
+}

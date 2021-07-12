@@ -42,7 +42,7 @@ my %groups = (
         q => 'arthropods',
         r => 'reptiles',
         s => 'sharks',
-        t => 'ctenophores',
+        t => 'other-animal-phyla',
         u => 'algae',
         v => 'vascular-plants',
         w => 'annelids',
@@ -246,14 +246,19 @@ sub generate_html
     if (-s "$$data{_name}.png")
     {
         $species_img = qq[<img src="$$data{_name}.png" />];
-        system(qq[s3cmd --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
+        system(qq[s3cmd --acl-public --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
     }
-    my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
-    my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*ccs\*.stats | pbstats2json -p -u` : 'null';
+    my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : 'null';
     my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
     my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
-    my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
+    $illumina_json = $illumina_json.$rnaseq_json;
+    $illumina_json =~ s/\]\[/,/;
+    $illumina_json = load_illumina_accessions($illumina_json) if ($illumina_json);
+    $illumina_json  = 'null' unless ($illumina_json);
+    $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
@@ -276,18 +281,18 @@ sub generate_html
     if (-s "genomic_data/$$data{_name}.mash.png")
     {
         my $file =  "genomic_data/$$data{_name}.mash.png";
-        system(qq[s3cmd --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$file]);
+        system(qq[s3cmd --acl-public --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file]);
         $genomic_data .= qq[<a href="genomic_data/$$data{_name}.mash.png" data-toggle="lightbox" data-gallery="genomic_data" data-footer="Mash plots show distance between sketches for each data set. Can be use to spot species swaps. Be aware though that structure in the heatmap may be due to technology differences (higher error rate reads vs low error rate reads) or large differences in coverage." data-title="$$data{name} <a href='https://mash.readthedocs.io/en/latest/'>Mash</a> plot"><img src="genomic_data/$$data{_name}.mash.png" class="figure-img img-fluid" width="200"></a>\n];
     }
     foreach my $file (glob("genomic_data/*/*/stats/*.hic.png"))
     {
-        system(qq[s3cmd --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$file]);
+        system(qq[s3cmd --acl-public --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file]);
         my ($sample,$tech) = $file =~ m/genomic_data\/([^\/]+)\/([^\/]+)/;
         $genomic_data .= qq[<a href="$file" data-toggle="lightbox" data-title="$sample $tech Hi-C heatmap" data-gallery="genomic_data" data-footer="Hi-C heatmap of 30 longest contigs from low coverage sampling of the data generated with <a href='https://github.com/wtsi-hpag/PretextMap'>PretextMap</a> and <a href='https://github.com/wtsi-hpag/PretextSnapshot'>PretextSnapshot</a>."><img src="$file" class="figure-img img-fluid" width="200"></a>\n];
     }
     foreach my $file (glob("genomic_data/*/*/stats/*.fragment_separation.png"))
     {
-        system(qq[s3cmd --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file && s3cmd --quiet setacl --acl-public s3://tolqc/$$data{group}/$$data{_name}/$file]);
+        system(qq[s3cmd --acl-public --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file]);
         my ($sample,$tech) = $file =~ m/genomic_data\/([^\/]+)\/([^\/]+)/;
         $genomic_data .= qq[<a href="$file" data-toggle="lightbox" data-title="$sample $tech Hi-C fragment separation distribution" data-gallery="genomic_data" data-footer="Hi-C fragment separation distribution from low coverage sampling of the data generated with <a href='https://github.com/wtsi-hpag/HiLine'>HiLine</a>."><img src="$file" class="figure-img img-fluid" width="200"></a>\n];
     }
@@ -320,7 +325,7 @@ sub generate_html
     </head>
     <body>
         <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
-            <div class="container">
+            <div class="container-fluid">
                 <a href="/" class="navbar-brand">Tree of Life QC</a>
                 <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
@@ -337,27 +342,20 @@ sub generate_html
                             <a class="nav-link" href="#spectra">Spectra</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="#genomic_data">Genomic Data</a>
+                            <a class="nav-link" href="#seqdata">Sequence Data</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#cobionts">Cobionts</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="#asm">Assemblies</a>
                         </li>
-<!--                         <li class="nav-item dropdown">
-                            <a class="nav-link dropdown-toggle" data-toggle="dropdown" href="#data" id="download">Data <span class="caret"></span></a>
-                            <div class="dropdown-menu" aria-labelledby="download">
-                                <a class="dropdown-item" href="#pacbio">PacBio</a>
-                                <a class="dropdown-item" href="#ont" download>ONT</a>
-                                <a class="dropdown-item" href="#linked-reads" download>10XG</a>
-                                <a class="dropdown-item" href="#arima" download>Hi-C Arima</a>
-                            </div>
-                        </li>
- -->                    </ul>
                 </div>
             </div>
         </div>
 
 
-        <div class="container">
+        <div class="container-fluid">
             <div class="page-header" id="banner">
                 <div class="row">
                     <div class="col-lg-10 col-md-7 col-sm-6">
@@ -414,6 +412,7 @@ sub generate_html
                 <table id="sts_table" style="width: auto"
                     data-show-columns="true"
                     data-show-columns-toggle-all="true"
+                    data-buttons-align="left"
                     data-show-export="true"
                     data-export-types=["txt","xlsx","csv"]
                     data-show-button-icons="true"
@@ -481,8 +480,7 @@ sub generate_html
 
             <hr/>
 
-            <!-- GENOMIC -->
-            <h2><a name="genomic_data">Genomic data</a></h2>
+            <h2><a name="seqdata">Sequence data</a></h2>
             <div class="section">
                 $genomic_data
             </div>
@@ -492,69 +490,55 @@ sub generate_html
             <h3><a name="pacbio">PacBio run data</a></h3>
             <p>Below are stats for each PacBio seqeuncing run collected for this species.</p>
             <div class="section">
-                <table id="pacbio_table" style="width: auto"
+                <div class="pacbiotoolbar">
+                    <button id="pacbiobutton" class="btn btn-secondary">show all plots</button>
+                    <button id="pacbiobutton2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="pacbio_table"
+                    data-pagination="true"
+                    data-page-size=20
+                    data-search="true"
+                    data-search-align="left"
                     data-toggle="table"
                     data-show-toggle="true"
                     data-show-columns="true"
+                    data-buttons-align="left"
                     data-show-columns-toggle-all="true"
                     data-sort-name="date"
                     data-sort-order="asc"
                     data-detail-view="true"
                     data-detail-view-icon="false"
                     data-detail-view-by-click="true"
+                    data-toolbar=".pacbiotoolbar"
+                    data-toolbar-align="right"
                     data-detail-formatter="asm_image_formatter">
                     <thead>
                         <tr>
                             <th data-field="specimen" data-sortable="true">specimen</th>
-                            <th data-field="sanger_id" data-sortable="true">sample</th>
+                            <th data-field="sanger_id" data-sortable="true" data-visible="false">sample</th>
                             <th data-field="date" data-sortable="true">date</th>
                             <th data-field="instrument" data-sortable="true" data-visible="false">instrument</th>
-                            <th data-field="run" data-sortable="true">run</th>
+                            <th data-field="run" data-sortable="true">run id</th>
                             <th data-field="movie" data-sortable="true">movie</th>
                             <th data-field="well_label" data-sortable="true">well</th>
                             <th data-field="MovieLength" data-sortable="true" data-visible="false">movie length</th>
                             <th data-field="tag_index" data-sortable="true">tag</th>
                             <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag sequence</th>
-                            <th data-field="accession_number" data-sortable="true" data-visible="false">accession</th>
                             <th data-field="library_load_name" data-sortable="true" data-visible="false">library load name</th>
-                            <th data-field="species_name" data-sortable="true"  data-visible="false">species</th>
+                            <th data-field="n" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">reads</th>
                             <th data-field="sum" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
                             <th data-field="N50" data-align='right' data-sortable="true" data-formatter="local_formatter">N50</th>
-                            <th data-field="n" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">reads</th>
                             <th data-field="a" data-align='right' data-sortable="true" data-visible="false">A (&#37;)</th>
                             <th data-field="c" data-align='right' data-sortable="true" data-visible="false">C (&#37;)</th>
                             <th data-field="g" data-align='right' data-sortable="true" data-visible="false">G (&#37;)</th>
                             <th data-field="t" data-align='right' data-sortable="true" data-visible="false">T (&#37;)</th>
+                            <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
+                            <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter">run accession</th>
+                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">exp accession</th>
+                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">study accession</th>
+                            <th data-field="species_name" data-sortable="true"  data-visible="false">species</th>
                             <th data-field="barcode" data-align='right' data-sortable="true" data-formatter="bold_modal_formatter" data-cell-style="cellStyle">barcode</th>
                             <!-- CCS report, LIMA report, chemistry, run-stats(P0,P1,P2), run date, instrument, movie-time, pre-ext, seqkit, bindingkit, reagentbox, cell-lot, loading-conc, pass/fail, totalGb, unique molecular yield, polymerase n50, ... -->
-                        </tr>
-                    </thead>
-                </table>
-            </div>
-
-            <hr/>
-
-            <h3><a name="mashscreen">Contamination screen</a></h3>
-            <p>Below are results from a contamination screen of the PacBio data using <a href="https://mash.readthedocs.io/en/latest/tutorials.html#screening-a-read-set-for-containment-of-refseq-genomes">Mash screen</a> against RefSeq assemblies.</p>
-            <div class="section">
-                <table id="mashscreen_table" style="width: auto"
-                    data-toggle="table"
-                    data-show-toggle="true"
-                    data-show-columns="true"
-                    data-show-columns-toggle-all="true"
-                    data-pagination="true"
-                    data-page-size=5
-                    data-sort-name="identity"
-                    data-row-style="mashStyle"
-                    data-sort-order="desc">
-                    <thead>
-                        <tr>
-                            <th data-field="identity" data-sortable="true">identity</th>
-                            <th data-field="shared-hashes" data-sortable="true" data-visible="false">shared-hashes</th>
-                            <th data-field="median-multiplicity" data-sortable="true" data-visible="false">median-multiplicity</th>
-                            <th data-field="p-value" data-sortable="true" data-visible="false">p-value</th>
-                            <th data-field="query" data-sortable="true" data-visible="false">query</th>
-                            <th data-field="info" data-sortable="true">info</th>
                         </tr>
                     </thead>
                 </table>
@@ -599,38 +583,48 @@ sub generate_html
             <h3><a name="illumina">Illumina run data</a></h3>
             <p>Illumina run stats.</p>
             <div class="section" id="illumina">
-                <div id="toolbar">
+                <div class="illuminatoolbar">
                     <button id="button" class="btn btn-secondary">show all plots</button>
                     <button id="button2" class="btn btn-secondary">hide all plots</button>
                 </div>
-                <table id="illumina_table" style="width: auto"
+                <table id="illumina_table"
+                        data-pagination="true"
+                        data-page-size=20
+                        data-search="true"
+                        data-search-align="left"
                         data-toggle="table"
                         data-show-toggle="true"
                         data-show-columns="true"
                         data-show-columns-toggle-all="true"
+                        data-buttons-align="left"
                         data-sort-order="asc"
                         data-detail-view="true"
                         data-detail-view-icon="false"
                         data-detail-view-by-click="true"
+                        data-toolbar=".illuminatoolbar"
+                        data-toolbar-align="right"
                         data-detail-formatter="illumina_image_formatter">
                     <thead>
                         <tr>
-                            <th data-field="type" data-sortable="true">source</th>
+                            <th data-field="pipeline_id_lims" data-sortable="true">pipeline</th>
+                            <th data-field="type" data-sortable="true" data-visible="false">source</th>
                             <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="date" data-sortable="true">date</th>
                             <th data-field="run" data-sortable="true" data-formatter="illumina_run_formatter">run id</th>
                             <th data-field="reads_paired" data-align='right' data-sortable="true" data-formatter="local_formatter">read pairs</th>
                             <th data-field="total_length" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
                             <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
                             <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
-                            <th data-field="accession_number" data-sortable="true">sample_acc</th>
-                            <th data-field="sanger_id" data-sortable="true">sanger_id</th>
-                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
-                            <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
+                            <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
+                            <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter">run accession</th>
+                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">exp accession</th>
+                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">study accession</th>
+                            <th data-field="sanger_id" data-sortable="true" data-visible="false">sample</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag sequence</th>
+                            <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2 sequence</th>
                             <th data-field="run_qc_status" data-sortable="true" data-cell-style="illumina_cell_status_style">run status</th>
                             <th data-field="npg_qc_status" data-sortable="true" data-visible="false">npg status</th>
-                            <th data-field="date" data-sortable="true">date</th>
                             <th data-field="species" data-sortable="true" data-visible="false">species</th>
-                            <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
                             <th data-field="barcode" data-align='right' data-sortable="true" data-formatter="bold_topmatch_formatter" data-cell-style="cellStyle">barcode</th>
                         </tr>
                     </thead>
@@ -639,46 +633,28 @@ sub generate_html
 
             <hr/>
 
-            <!-- TRANSCRIPTOMIC -->
-            <h2><a name="transcriptomic_data">Transcriptomic data</a></h2>
+            <h2><a name="Cobionts">Cobionts</a></h2>
+            <p>Below are results from a screen of the PacBio data using <a href="https://mash.readthedocs.io/en/latest/tutorials.html#screening-a-read-set-for-containment-of-refseq-genomes">Mash screen</a> against RefSeq assemblies.</p>
             <div class="section">
-            </div>
-
-            <h3><a name="rnaseq">RNA-seq run data</a></h3>
-            <p>Illumina run stats.</p>
-            <div class="section" id="rnaseq">
-                <div id="toolbar">
-                    <button id="button" class="btn btn-secondary">show all plots</button>
-                    <button id="button2" class="btn btn-secondary">hide all plots</button>
-                </div>
-                <table id="rnaseq_table" style="width: auto"
-                        data-toggle="table"
-                        data-show-toggle="true"
-                        data-show-columns="true"
-                        data-show-columns-toggle-all="true"
-                        data-sort-order="asc"
-                        data-detail-view="true"
-                        data-detail-view-icon="false"
-                        data-detail-view-by-click="true"
-                        data-detail-formatter="illumina_image_formatter">
+                <table id="mashscreen_table" style="width: auto"
+                    data-toggle="table"
+                    data-show-toggle="true"
+                    data-show-columns="true"
+                    data-show-columns-toggle-all="true"
+                    data-buttons-align="left"
+                    data-pagination="true"
+                    data-page-size=5
+                    data-sort-name="identity"
+                    data-row-style="mashStyle"
+                    data-sort-order="desc">
                     <thead>
                         <tr>
-                            <th data-field="type" data-sortable="true">source</th>
-                            <th data-field="specimen" data-sortable="true">specimen</th>
-                            <th data-field="run" data-sortable="true" data-formatter="illumina_run_formatter">run id</th>
-                            <th data-field="reads_paired" data-align='right' data-sortable="true" data-formatter="local_formatter">read pairs</th>
-                            <th data-field="total_length" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
-                            <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
-                            <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
-                            <th data-field="accession_number" data-sortable="true">sample_acc</th>
-                            <th data-field="sanger_id" data-sortable="true">sanger_id</th>
-                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
-                            <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
-                            <th data-field="run_qc_status" data-sortable="true" data-cell-style="illumina_cell_status_style">run status</th>
-                            <th data-field="npg_qc_status" data-sortable="true" data-visible="false">npg status</th>
-                            <th data-field="date" data-sortable="true">date</th>
-                            <th data-field="species" data-sortable="true" data-visible="false">species</th>
-                            <th data-field="pipeline_id_lims" data-sortable="true" data-visible="false">pipeline</th>
+                            <th data-field="identity" data-sortable="true">identity</th>
+                            <th data-field="shared-hashes" data-sortable="true" data-visible="false">shared-hashes</th>
+                            <th data-field="median-multiplicity" data-sortable="true" data-visible="false">median-multiplicity</th>
+                            <th data-field="p-value" data-sortable="true" data-visible="false">p-value</th>
+                            <th data-field="query" data-sortable="true" data-visible="false">query</th>
+                            <th data-field="info" data-sortable="true">info</th>
                         </tr>
                     </thead>
                 </table>
@@ -689,21 +665,24 @@ sub generate_html
             <h2><a name="asm">Assemblies</a></h2>
             <p>In-progress assembly QC.</p>
             <div class="section" id="asm">
-                <div id="toolbar">
+                <div class="asmtoolbar">
                     <button id="asmbutton" class="btn btn-secondary">show all plots</button>
                     <button id="asmbutton2" class="btn btn-secondary">hide all plots</button>
                 </div>
-                <table id="asm_table" style="width: auto"
+                <table id="asm_table"
                         data-toggle="table"
                         data-show-toggle="true"
                         data-show-columns="true"
                         data-show-columns-toggle-all="true"
+                        data-buttons-align="left"
                         data-sort-order="asc"
                         data-search="true"
                         data-search-align="left"
                         data-detail-view="true"
                         data-detail-view-icon="false"
                         data-detail-view-by-click="true"
+                        data-toolbar=".asmtoolbar"
+                        data-toolbar-align="right"
                         data-detail-formatter="asm_image_formatter">
                     <thead>
                         <tr>
@@ -716,7 +695,7 @@ sub generate_html
                             <th data-field="scaffold_n" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffolds</th>
                             <th data-field="length" data-sortable="true" data-formatter="length_formatter" data-align="right">length</th>
                             <th data-field="busco" data-sortable="true" data-formatter="busco_formatter">BUSCO</th>
-                            <!-- <th data-field="merqury" data-sortable="true" data-formatter="merqury_formatter" data-align="right">merqury</th> -->
+                            <th data-field="merqury" data-sortable="true" data-formatter="merqury_formatter" data-align="right">merqury</th>
                         </tr>
                     </thead>
                 </table>
@@ -728,7 +707,7 @@ sub generate_html
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
                     at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
-                    Copyright &copy; 2020 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    Copyright &copy; 2020-2021 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
                     <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
             </div>
         </div>
@@ -862,9 +841,16 @@ sub generate_html
         function merqury_formatter(value,row) {
             ret = '';
             if (row.merqury) {
-                ret+='Q'+dec1_formatter(row.merqury[0].primary.qv.value);
-                ret+='-C'+dec1_formatter(row.merqury[0].both.completeness.value);
-                ret+='.'+row.merqury[0].type;
+                if (row.merqury.qv)
+                {
+                    ret+='Q'+dec1_formatter(row.merqury.qv);
+                    if (row.merqury.completeness) {
+                        ret+='-C'+dec1_formatter(row.merqury.completeness);
+                    }
+                    if (ret && row.merqury.type) {
+                        ret+='('+row.merqury.type+')';
+                    }
+                }
             }
             return ret
         }
@@ -886,6 +872,12 @@ sub generate_html
                 return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
             }
             return "-"
+        }
+        function ena_formatter(value) {
+            if (value) {
+                return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+            }
+            return "-";
         }
         function bold_topmatch_formatter(value, row) {
             if (row.match && row.species_name)
@@ -919,10 +911,6 @@ sub generate_html
         if ($illumina_json) {
             var illumina = $illumina_json;
             \$('#illumina_table').bootstrapTable({data: illumina});
-        }
-        if ($rnaseq_json) {
-            var rnaseq = $rnaseq_json;
-            \$('#rnaseq_table').bootstrapTable({data: rnaseq});
         }
         var \$button = \$('#button')
         var \$button2 = \$('#button2')
@@ -960,7 +948,7 @@ sub generate_html
                 }
             }
             return {
-                classes: 'bg-warning'
+                classes: 'bg-success'
             }
         }
         if ($asm_json) {
@@ -981,6 +969,18 @@ sub generate_html
             return asm_plots;
         }
 
+        var \$pacbiobutton = \$('#pacbiobutton')
+        var \$pacbiobutton2 = \$('#pacbiobutton2')
+
+        \$(function() {
+            \$pacbiobutton.click(function () {
+                \$('#pacbio_table').bootstrapTable('expandAllRows')
+            })
+            \$pacbiobutton2.click(function () {
+                \$('#pacbio_table').bootstrapTable('collapseAllRows')
+            })
+        })
+
         var \$asmbutton = \$('#asmbutton')
         var \$asmbutton2 = \$('#asmbutton2')
 
@@ -1000,4 +1000,69 @@ sub generate_html
     close($fh);
     system(qq[s3cmd --quiet put --acl-public $filename s3://tolqc/$$data{group}/$$data{_name}/index.html]);
     return $data;
+}
+
+sub load_illumina_accessions
+{
+    my ($illumina_json) = @_;
+    my $accessions;
+    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
+    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    while(<$fh>)
+    {
+        chomp;
+        my ($file,$run,$exp,$study) = split /\t/;
+        $file = basename($file);
+        $file =~ s/\.(cr|b)am$//;
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+    }
+    close $fh;
+
+    my $illumina = decode_json($illumina_json);
+    my $illumina_update;
+    foreach my $rec (@$illumina)
+    {
+        if (exists $$accessions{$$rec{run}})
+        {
+            $$rec{run_accession} = $$accessions{$$rec{run}}->{run};
+            $$rec{exp_accession} = $$accessions{$$rec{run}}->{exp};
+            $$rec{study_accession} = $$accessions{$$rec{run}}->{study};
+        }
+        push @{$illumina_update}, $rec;
+    }
+    return encode_json($illumina_update);
+}
+
+
+sub load_pacbio_accessions
+{
+    my ($pacbio_json) = @_;
+    my $accessions;
+    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
+    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    while(<$fh>)
+    {
+        chomp;
+        my ($file,$run,$exp,$study) = split /\t/;
+        $file = basename($file);
+        $file =~ s/\.(cr|b)am$//;
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+    }
+    close $fh;
+
+    my $pacbio = decode_json($pacbio_json);
+    my $pacbio_update;
+    foreach my $rec (@$pacbio)
+    {
+        my $file = basename($$rec{input});
+        $file =~ s/\.stats$//;
+        if (exists $$accessions{$file})
+        {
+            $$rec{run_accession} = $$accessions{$file}->{run};
+            $$rec{exp_accession} = $$accessions{$file}->{exp};
+            $$rec{study_accession} = $$accessions{$file}->{study};
+        }
+        push @{$pacbio_update}, $rec;
+    }
+    return encode_json($pacbio_update);
 }
