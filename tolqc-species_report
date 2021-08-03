@@ -48,7 +48,7 @@ my %groups = (
         w => 'annelids',
         x => 'molluscs',
         y => 'bacteria',
-        z => 'archea',
+        z => 'archaea',
     );
 
 die("Expected TOLQCROOT environment variable to be set") unless (exists $ENV{TOLQCROOT});
@@ -252,13 +252,14 @@ sub generate_html
     my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : 'null';
     my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
-    my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     $illumina_json = $illumina_json.$rnaseq_json;
     $illumina_json =~ s/\]\[/,/;
     $illumina_json = load_illumina_accessions($illumina_json) if ($illumina_json);
     $illumina_json  = 'null' unless ($illumina_json);
     $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
+
+    my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
@@ -821,7 +822,7 @@ sub generate_html
             if (value) {
                 return value.toLocaleString();
             }
-            return "-"
+            return ""
         }
         function length_formatter(value,row) {
             if (row.scaffold_sum) {
@@ -830,13 +831,13 @@ sub generate_html
             if (row.contig_sum) {
                 return row.contig_sum.toLocaleString();
             }
-            return "-"
+            return ""
         }
         function busco_formatter(value,row) {
             if (row.busco) {
                 return row.busco[0].busco;
             }
-            return "-"
+            return ""
         }
         function merqury_formatter(value,row) {
             ret = '';
@@ -871,13 +872,16 @@ sub generate_html
             if (value) {
                 return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
             }
-            return "-"
+            return ""
         }
         function ena_formatter(value) {
             if (value) {
-                return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                if (value.match(/^[SE]RR/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                return value;
             }
-            return "-";
+            return "";
         }
         function bold_topmatch_formatter(value, row) {
             if (row.match && row.species_name)
@@ -892,7 +896,7 @@ sub generate_html
                     return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
                 }
             } else {
-                return '-';
+                return '';
             }
         }
 
@@ -1011,10 +1015,10 @@ sub load_illumina_accessions
     while(<$fh>)
     {
         chomp;
-        my ($file,$run,$exp,$study) = split /\t/;
+        my ($file,$run,$exp,$study,$sample,$date) = split /\t/;
         $file = basename($file);
         $file =~ s/\.(cr|b)am$//;
-        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
     }
     close $fh;
 
@@ -1027,6 +1031,8 @@ sub load_illumina_accessions
             $$rec{run_accession} = $$accessions{$$rec{run}}->{run};
             $$rec{exp_accession} = $$accessions{$$rec{run}}->{exp};
             $$rec{study_accession} = $$accessions{$$rec{run}}->{study};
+            $$rec{accession_number} = $$accessions{$$rec{run}}->{sample};
+            $$rec{submission_date} = $$accessions{$$rec{run}}->{date};
         }
         push @{$illumina_update}, $rec;
     }
@@ -1043,10 +1049,10 @@ sub load_pacbio_accessions
     while(<$fh>)
     {
         chomp;
-        my ($file,$run,$exp,$study) = split /\t/;
+        my ($file,$run,$exp,$study,$sample,$date) = split /\t/;
         $file = basename($file);
         $file =~ s/\.(cr|b)am$//;
-        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
     }
     close $fh;
 
@@ -1061,6 +1067,8 @@ sub load_pacbio_accessions
             $$rec{run_accession} = $$accessions{$file}->{run};
             $$rec{exp_accession} = $$accessions{$file}->{exp};
             $$rec{study_accession} = $$accessions{$file}->{study};
+            $$rec{accession_number} = $$accessions{$file}->{sample};
+            $$rec{submission_date} = $$accessions{$file}->{date};
         }
         push @{$pacbio_update}, $rec;
     }
