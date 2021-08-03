@@ -19,6 +19,8 @@ foreach my $rec (@$illumina)
         $$rec{run_accession} = $$accessions{$$rec{run}}->{run};
         $$rec{exp_accession} = $$accessions{$$rec{run}}->{exp};
         $$rec{study_accession} = $$accessions{$$rec{run}}->{study};
+        $$rec{accession_number} = $$accessions{$$rec{run}}->{sample};
+        $$rec{submission_date} = $$accessions{$$rec{run}}->{date};
     }
     push @{$illumina_update}, $rec;
 }
@@ -118,6 +120,7 @@ print $fh (qq[
                             <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter" data-filter-control="input">run accession</th>
                             <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">exp accession</th>
                             <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">study accession</th>
+                            <th data-field="submission_date" data-sortable="true" data-visible="false" data-filter-control="input">submission date</th>
                             <th data-field="sanger_id" data-sortable="true" data-visible="false" data-filter-control="input">sanger id</th>
                             <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag_sequence</th>
                             <th data-field="tag2_sequence" data-sortable="true" data-visible="false">tag2_sequence</th>
@@ -226,7 +229,10 @@ print $fh (qq[
         }
         function ena_formatter(value) {
             if (value) {
-                return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                if (value.match(/^[SE]RR/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                return value;
             }
             return "";
         }
@@ -303,16 +309,16 @@ sub write_file_to_s3
 
 sub load_accessions
 {
+    my $prefix = qq[$ENV{TOLQCROOT}/track/tol_subtrack];
     my $accessions;
-    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
-    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    open(my $fh, "cat ${prefix}.fofn ${prefix}_pending.fofn |") || die("Could not open file $prefix");
     while(<$fh>)
     {
         chomp;
-        my ($file,$run,$exp,$study) = split /\t/;
+        my ($file,$run,$exp,$study,$sample,$date) = split /\t/;
         $file = basename($file);
         $file =~ s/\.(cr|b)am$//;
-        $$accessions{$file} = { run => $run, exp => $exp, study => $study};
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
     }
     close $fh;
     return $accessions;

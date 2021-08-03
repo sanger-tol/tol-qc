@@ -1,0 +1,115 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2021 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use JSON;
+use Cwd;
+use File::Basename;
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        my $res = parse_bionano($opts,$_);
+        push(@$output, $res) if (exists $$res{input});
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        my $res = parse_bionano($opts,$file);
+        push(@$output, $res) if (exists $$res{input});
+    }
+}
+print encode_json($output);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Make json from bionano files\n",
+        "Usage: bionano2json <bnx|cmap>\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, base => "$ENV{PWD}/", species => '', group => '', upload => 0 };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub parse_bionano
+{
+    my ($opts,$input) = @_;
+    my $base = basename($input);
+    my ($specimen,$model,$enzyme,$type) = $base =~ m/^([^\_]+)_(Saphyr|Irys)_([^\_]+).*\.(cmap|bnx)(\.gz)?$/;
+
+    $input = Cwd::abs_path($input) unless ($input =~ /^\//);
+
+    my $species = $$opts{species};
+    unless ($species)
+    {
+        ($species) = $input =~ m{/([^\/]+)/(genomic|transcriptomic|resequencing)_data};
+        $species =~ s/_/ /g;
+    }
+    my $group = $$opts{group};
+    unless ($group)
+    {
+        ($group) = $input =~ m{([^\/]+/[^\/]+)/[^\/]+/(genomic|transcriptomic|resequencing)_data};
+    }
+
+    return {} unless $specimen;
+
+    return {
+        input => $base,
+        species => $species,
+        group => $group,
+        specimen => $specimen,
+        platform => 'BioNano',
+        model => $model,
+        enzyme => $enzyme,
+        type => $type
+    }
+}

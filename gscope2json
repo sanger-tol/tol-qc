@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-#    Copyright (C) 2020 Genome Research Ltd.
+#    Copyright (C) 2020-2021 Genome Research Ltd.
 #
 #    Author: Shane McCarthy <sm15@sanger.ac.uk>
 #
@@ -64,7 +64,7 @@ sub error
 
 sub parse_params
 {
-    my $opts = { stdin => 0, base => "$ENV{PWD}/", regex => '([^\/]+)/preqc/k\d+/(\S+).k\d+.summary.txt', group => '', upload => 0 };
+    my $opts = { stdin => 0, base => "$ENV{PWD}/", regex => '([^\/]+)/(kmer|preqc)/k\d+/(\S+).k\d+.summary.txt', group => '', upload => 0 };
     while (defined(my $arg=shift(@ARGV)))
     {
         if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
@@ -83,13 +83,17 @@ sub parse_gs
     my ($opts,$input) = @_;
     $input = Cwd::abs_path($input);
     open(my $fh, "<$input") or die("Could not open $input");
-    my ($version, $k, $min_het, $max_het, $min_len, $max_len, $min_rep, $max_rep, $min_uniq, $max_uniq, $min_fit, $max_fit, $min_err, $max_err);
+    my ($version, $p, $k, $min_hom, $max_hom, $min_het, $max_het, $min_len, $max_len, $min_rep, $max_rep, $min_uniq, $max_uniq, $min_fit, $max_fit, $min_err, $max_err);
     while (<$fh>)
     {
         chomp;
         s/,//g;
-        if (/^GenomeScope version (\S+)/) { $version = $version; }
+        s/NA/-1/g;
+        if (/^GenomeScope version\s+(\S+)/) { $version = $1; }
+        elsif (/^p = (\d+)/) { $p = $1+0; }
         elsif (/^k = (\d+)/) { $k = $1+0; }
+        elsif (/^Homozygous.+\s+([-\d\.]+)%\s+([-\d\.]+)?%?/) { $min_hom = $1+0; $max_hom = $min_hom; $max_hom = $2+0 if $2; }
+        elsif (/^Heterozygous.+\s+([-\d\.]+)%\s+([-\d\.]+)?%?/) { $min_het = $1+0; $max_het = $min_het; $max_het = $2+0 if $2; }
         elsif (/^Heterozygosity\s+([-\d\.]+)%\s+([-\d\.]+)%/) { $min_het = $1+0; $max_het = $2+0; }
         elsif (/^Genome Haploid Length\s+([-\d\,]+) bp\s+([-\d\,]+) bp/) { $min_len = $1+0; $max_len = $2+0; }
         elsif (/^Genome Repeat Length\s+([-\d\,]+) bp\s+([-\d\,]+) bp/) { $min_rep = $1+0; $max_rep = $2+0; }
@@ -98,6 +102,7 @@ sub parse_gs
         elsif (/^Read Error Rate\s+([-\d\.]+)%\s+([-\d\.]+)%/) { $min_err = $1+0; $max_err = $2+0; }
     }
     close $fh;
+
     my $model = $input;
     $model =~ s/summary/model/;
     my $kcov = 0; my $dup = 0;
@@ -110,17 +115,29 @@ sub parse_gs
         chomp $dup;
         $dup = $dup+0;
     }
-    my $hash = { k => $k, dup => $dup, kcov => $kcov,
+    my $hash = { p => $p, k => $k, dup => $dup, kcov => $kcov, version => $version,
         min => { het => $min_het, len => $min_len, rep => $min_rep, uniq => $min_uniq, fit => $min_fit, err => $min_err },
         max => { het => $max_het, len => $max_len, rep => $max_rep, uniq => $max_uniq, fit => $max_fit, err => $max_err }
     };
-    my ($type,$specimen) = $input =~ m{$$opts{regex}};
+    my ($type,undef,$specimen) = $input =~ m{$$opts{regex}};
     $$hash{type} = $type if ($type);
     $$hash{specimen} = $specimen if ($specimen);
     my $base = $input;
-    $base =~ s/\.summary\.txt//;
-    # $plot =~ s/summary\.txt/plot.png/;
-    my %plots = ( "$base.plot.png" => "Genomescope plot", "$base.plot.log.png" => "Genomescope log10 plot", "$base.smudgeplot.png" => "Smudge plot", "$base.smudgeplot_log10.png" => "Smudge log10 plot");
+    $base =~ s/.summary\.txt$//;
+    my %plots = (
+        "${base}.plot.png" => "Genomescope 1.0 plot",
+        "${base}.plot.log.png" => "Genomescope 1.0 log10 plot",
+        "${base}.smudgeplot.png" => "Smudge plot",
+        "${base}.smudgeplot_log10.png" => "Smudge log10 plot",
+        "${base}_gc.fi.png" => "KatGC fill plot",
+        "${base}_gc.ln.png" => "KatGC line plot",
+        "${base}_gc.st.png" => "KatGC stack plot",
+        "${base}_linear_plot.png" => "Genomescope 2.0 linear plot",
+        "${base}_log_plot.png" => "Genomescope 2.0 log plot",
+        "${base}_transformed_linear_plot.png" => "Genomescope 2.0 transformed linear plot",
+        "${base}_transformed_log_plot.png" => "Genomescope 2.0 transformed log plot",
+    );
+
     while (my ($plot, $caption) = each %plots)
     {
         if (-s $plot && exists $$opts{base})
@@ -128,7 +145,7 @@ sub parse_gs
             my $relplot = $plot;
             $relplot =~ s/$$opts{base}//;
             my $label = $plot;
-            $label =~ s/$base\.//;
+            $label =~ s/$base.//;
             $label =~ s/\.png$//;
             if ($$opts{upload})
             {
@@ -144,6 +161,23 @@ sub parse_gs
     }
     return $hash;
 }
+
+# GenomeScope version 2.0
+# p = 2
+# k = 31
+# name prefix = fBorAnt1
+
+# property                      min               max
+# Homozygous (aa)               0%                100%
+# Heterozygous (ab)             0%                100%
+# Genome Haploid Length         NA bp             308,536,966 bp
+# Genome Repeat Length          174,936,602 bp    184,648,132 bp
+# Genome Unique Length          125,486,645 bp    132,452,982 bp
+# Model Fit                     80.5734%          82.8117%
+# Read Error Rate               0.847886%         0.847886%
+
+
+
 
 # GenomeScope version 1.0
 # k = 31

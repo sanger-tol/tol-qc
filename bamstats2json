@@ -235,7 +235,7 @@ sub parse_bamstats
 
     my $bold = $input;
     $bold =~ s/_F0xB00\.stats$/.m0.cov/;
-    $bold =~ s/stats/coi/;
+    $bold =~ s/stats/bold/;
     if (-s $bold)
     {
         my $match = bold2json($bold);

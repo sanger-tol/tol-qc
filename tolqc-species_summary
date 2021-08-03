@@ -28,15 +28,8 @@ sub gather_data
         chomp;
         my $species_u = basename($_);
         my $group = dirname($_);
-        # next if ($species_u =~ /\./);
-        # print "$species_u\t$group\n";
         my $species = $species_u;
         $species =~ s/_/ /g;
-        # unless (`s3cmd ls s3://tolqc/$group/$species_u/index.html`)
-        # {
-        #     print STDERR qq[skipping "$species" as report does not exist at s3://tolqc/$group/$species_u/index.html\n];
-        #     next;
-        # }
 
         my $spp = get_specimens($species,$group);
         my $sts = get_sts_record($species,$spp);
@@ -266,8 +259,6 @@ sub generate_landing_page
                     <div class="list-group list-group-horizontal">
                         <a href="/illumina/" class="list-group-item list-group-item-action">Illumina</a>
                         <a href="/pacbio/" class="list-group-item list-group-item-action">PacBio</a>
-                        <a href="/rnaseq/" class="list-group-item list-group-item-action">RNA-seq</a>
-                        <!-- <a href="/ccs.html" class="list-group-item list-group-item-action disabled">PacBio CCS</a> -->
                         <a href="/ont/" class="list-group-item list-group-item-action disabled">ONT</a>
                     </div>
                 </div>

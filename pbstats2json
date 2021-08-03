@@ -30,36 +30,6 @@ use XML::Simple;
 use Cwd;
 use File::Basename;
 
-# https://github.com/VGP/vgp-assembly/blob/master/VGP_specimen_naming_scheme.md
-my %groups = (
-        a => 'amphibians',
-        b => 'birds',
-        c => 'non-vascular-plants',
-        d => 'dicots',
-        e => 'echinoderms',
-        f => 'fish',
-        g => 'fungi',
-        h => 'platyhelminths',
-        i => 'insects',
-        j => 'jellyfish',
-        k => 'chordates',
-        l => 'monocots',
-        m => 'mammals',
-        n => 'nematodes',
-        o => 'sponges',
-        p => 'protists',
-        q => 'arthropods',
-        r => 'reptiles',
-        s => 'sharks',
-        t => 'ctenophores',
-        u => 'algae',
-        v => 'vascular-plants',
-        w => 'annelids',
-        x => 'molluscs',
-        y => 'bacteria',
-        z => 'archea',
-    );
-
 my $opts = parse_params();
 my $output = [];
 if ($$opts{stdin})
@@ -122,12 +92,22 @@ sub parse_asmstats
     my $base = basename($input);
     my $movie = '';
     my $barcode = '';
-    ($movie,undef,$barcode) = $base =~ m/([^\.]+)\.(ccs|subreads)\.([^\.]+)\.stats$/;
+    my $pipeline = '';
+    ($movie,$pipeline,$barcode) = $base =~ m/([^\.]+)\.(ccs|subreads)\.([^\.]+)\.stats$/;
     unless ($movie)
     {
-        ($movie) = $base =~ m/([^\.]+)\.(ccs|subreads)\.stats$/;
+        ($movie,$pipeline) = $base =~ m/([^\.]+)\.(ccs|subreads)\.stats$/;
     }
-    my ($instrument, $dt) = $movie =~ m/(m[^_]+)_(\d{6})_/;
+    my ($instrument, $dt);
+    if ($movie =~ /_p[0123]$/)
+    {
+        ($dt, $instrument) = $movie =~ m/m(\d{6})_[^_]+_([^_]+)_/;
+        $instrument = "m$instrument";
+    }
+    else
+    {
+        ($instrument, $dt) = $movie =~ m/(m[^_]+)_(\d{6})_/;
+    }
     my @a = ( $dt =~ m/../g );
     $dt = join "-", @a;
     $dt = "20$dt";
@@ -155,6 +135,14 @@ sub parse_asmstats
         $$stats{model}  = 'Sequel' if ($instrument =~ /^m5/);
         $$stats{model}  = 'Sequel II' if ($instrument =~ /^m6/);
         $$stats{model} .= 'e' if ($instrument =~ /e$/);
+    }
+    if ($pipeline eq 'ccs')
+    {
+        $$stats{pipeline} = 'PacBio - HiFi';
+    }
+    elsif ($pipeline eq 'subreads')
+    {
+        $$stats{pipeline} = 'PacBio - CLR';
     }
 
     open(my $fh, "<$input") || die("Could not open $input");
@@ -202,7 +190,7 @@ sub parse_asmstats
     close($fh);
     my $coi = $input;
     $coi =~ s/stats$/match.json/;
-    $coi =~ s/stats/coi/;
+    $coi =~ s/stats/bold/;
     if (-s $coi)
     {
         my $match = decode_json(`cat $coi`);

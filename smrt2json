@@ -57,7 +57,7 @@ my %groups = (
         w => 'annelids',
         x => 'molluscs',
         y => 'bacteria',
-        z => 'archea',
+        z => 'archaea',
     );
 
 my $opts = parse_params();

@@ -226,16 +226,16 @@ sub status
         }
         else
         {
-            my $sts_cov = get_sts_cov($specimen, $yield);
+            my ($sts_size, $sts_cov) = get_sts_cov($specimen, $yield);
             if ($cov)
             {
                 if ($tech eq 'pacbio')
                 {
-                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date);
+                    print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date);
                 }
                 else
                 {
-                    print join "\t", ($specimen, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date);
+                    print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date);
                 }
                 print "\n"
             }
@@ -243,11 +243,11 @@ sub status
             {
                 if ($tech eq 'pacbio')
                 {
-                    print join "\t", ($specimen, "", "", "", "-", $sts_cov, "","", $last_date);
+                    print join "\t", ($specimen, $sts_size/1e6, "", "", "", "-", $sts_cov, "","", $last_date);
                 }
                 else
                 {
-                    print join "\t", ($specimen, "", "", "", "", "", "-",$sts_cov, $last_date);
+                    print join "\t", ($specimen, $sts_size/1e6, "", "", "", "", "", "-",$sts_cov, $last_date);
                 }
                 print "\n"
             }
@@ -258,9 +258,8 @@ sub status
 sub get_sts_cov
 {
     my ($tolid, $yield) = @_;
-    return 0 unless $yield;
     my $sts_size = `grep $tolid $ENV{TOLQCROOT}/track/tol_sts.tsv | awk '{print \$NF}' | head -1`; chomp $sts_size;
-    return $sts_size ? qq[=$yield/$sts_size] : "";
+    return $sts_size ? ($sts_size, qq[=$yield/$sts_size]) : ("","");
 }
 
 

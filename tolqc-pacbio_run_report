@@ -166,7 +166,7 @@ print $fh (qq[
                     return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
                 }
             } else {
-                return '-';
+                return '';
             }
         }
         function taxon_link_formatter(value, row) {
