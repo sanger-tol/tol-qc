@@ -249,7 +249,7 @@ sub generate_html
         system(qq[s3cmd --acl-public --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
     }
     my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
-    my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : 'null';
     my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
     my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
@@ -789,7 +789,12 @@ sub generate_html
             return '<button type="button" class="btn btn-primary" data-toggle="modal" data-target="#bold_modal">'+row.match[0].taxonomicidentification+'</button>';
         }
         function gs_image_formatter(value, row, index) {
-            return '<a href="'+row["plot-plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-plot.log"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot.log"][0]+'" class="imggallery" width="75px"></a>';
+            if (row["plot-plot"]) {
+                return '<a href="'+row["plot-plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-plot.log"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot.log"][0]+'" class="imggallery" width="75px"></a>';
+            }
+            else {
+                return '<a href="'+row["plot-transformed_linear_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 linear plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-transformed_linear_plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-transformed_log_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-transformed_log_plot"][0]+'" class="imggallery" width="75px"></a>';
+            }
         }
         function gscope_detail_formatter(index, row) {
             var gscope_plots = '';
