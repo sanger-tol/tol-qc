@@ -259,6 +259,7 @@ sub generate_landing_page
                     <div class="list-group list-group-horizontal">
                         <a href="/illumina/" class="list-group-item list-group-item-action">Illumina</a>
                         <a href="/pacbio/" class="list-group-item list-group-item-action">PacBio</a>
+                        <a href="/bionano/" class="list-group-item list-group-item-action">BioNano</a>
                         <a href="/ont/" class="list-group-item list-group-item-action disabled">ONT</a>
                     </div>
                 </div>

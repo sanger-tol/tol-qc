@@ -135,7 +135,7 @@ sub status
         }
         my ($species_dir,$tech_dir) = $dir =~ m/(\S+)\/(genomic_data\S+)$/;
         chdir($species_dir);
-        my $gscope_json = `find $tech_dir -type f -name \*.summary.txt | gscope2json -p`;
+        my $gscope_json = `find $tech_dir -type f -name \*_summary.txt | grep kmer | gscope2json -p`;
         my $gscope = decode_json($gscope_json);
         my $data;
         if ($tech eq 'pacbio')

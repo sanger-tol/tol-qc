@@ -229,7 +229,10 @@ print $fh (qq[
         }
         function ena_formatter(value) {
             if (value) {
-                if (value.match(/^[SE]RR/)) {
+                if (value.match(/^[SE]R/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                if (value.match(/^PRJ/)) {
                     return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
                 }
                 return value;

@@ -99,7 +99,7 @@ sub parse_asmstats
         ($movie,$pipeline) = $base =~ m/([^\.]+)\.(ccs|subreads)\.stats$/;
     }
     my ($instrument, $dt);
-    if ($movie =~ /_p[0123]$/)
+    if ($movie =~ /_[pX][0123]$/)
     {
         ($dt, $instrument) = $movie =~ m/m(\d{6})_[^_]+_([^_]+)_/;
         $instrument = "m$instrument";
@@ -288,6 +288,7 @@ sub movie2lims
     # open my $fh, "baton2tsv -c run,well $baton | grep $movie | ";
 
     my $data = -s "$tolqc/track/tol_pacbio_data.fofn.part" ? "$tolqc/track/tol_pacbio_data.fofn.part" : "$tolqc/track/tol_pacbio_data.fofn";
+    $data .= " $tolqc/track/tol_pacbio_data.rsii.fofn";
     return $hash unless (`grep $movie $data`);
     open my $fh, "grep $movie $data | cut -f1,6,7 | ";
     my ($rundir,$run,$well);
@@ -298,6 +299,7 @@ sub movie2lims
         $rundir =~ s/\/[^\/]+$//;
         $run =~ s/RUN(\d)/RUN-$1/;
         $run = "TRACTION-RUN-$run" if ($run =~ /^(\d+)$/ && $run<1000);
+        $run =~ s/\s+$//;
         $$hash{rundir} = $rundir;
         $$hash{run} = $run;
         $$hash{well_label} = $well;

@@ -1,0 +1,158 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2020-2021 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use JSON;
+use Cwd;
+use File::Basename;
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        push @$output, parse_marker($opts, $_);
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        push @$output, parse_marker($opts, $file);
+    }
+}
+
+my $final_output = { species => [], families => [] };
+foreach my $res (@$output)
+{
+    while (my ($contig, $value) = each %{$$res{SpeciesPresent}})
+    {
+        my $data = {
+            specimen => $$res{specimen},
+            contig => $contig,
+            SSUlength => $$value{SSUlength},
+            Cluster => $$value{Cluster},
+            Classification => { embl_ebi_ena => $$value{embl_ebi_ena}, slv => $$value{slv} }
+        };
+        push @{$$final_output{species}}, $data;
+    }
+
+    while (my ($family, $value) = each %{$$res{Families}})
+    {
+        push @{$$final_output{families}}, { specimen => $$res{specimen}, family => $family, (%{$value}), exists $$res{"plot-$family"} ? ("plot-$family" => $$res{"plot-$family"}) : () };
+    }
+}
+
+print encode_json($final_output);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Convert Marker-pipeline results to json\n",
+        "Usage: marker2json <marker_directory>\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, base => "$ENV{PWD}/", regex => '([^\/]+)/pacbio/cobiont/marker', group => '', upload => 0 };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub parse_marker
+{
+    my ($opts,$dir) = @_;
+    my $abs_dir = Cwd::abs_path($dir);
+
+    my $hash;
+    my ($specimen) = $dir =~ m{$$opts{regex}};
+    $$hash{specimen} = $specimen if ($specimen);
+
+    if (-s "$abs_dir/$specimen.json")
+    {
+        my $json_txt = `cat $abs_dir/$specimen.json`;
+        my $json = decode_json($json_txt);
+        $$hash{SpeciesPresent} = $$json{SpeciesPresent};
+        $$hash{Families} = $$json{Families};
+    }
+    elsif (-s "$abs_dir/$specimen.ProkSSU.reduced.SILVA.genus.txt")
+    {
+        # parse this file
+        $$hash{SpeciesPresent} = {};
+        $$hash{Families} = {};
+    }
+
+    # "Comamonadaceae": {
+    #   "ClassifiedReads": 51074,
+    #   "ClassifiedReadsPercentage": 2.96,
+    #   "Busco_ClassifiedReads": "C:100.0%[S:0.0%,D:100.0%],F:0.0%,M:0.0%,n:688",
+    #   "Busco_Assembly": "C:100.0%[S:0.3%,D:99.7%],F:0.0%,M:0.0%,n:688",
+    #   "BuscoNucmer_Assembly_Contigs": 505,
+    #   "BuscoNucmer_Assembly_ContigLength": "36.82Mb",
+    #   "BuscoNucmer_Assembly_Reads": 22899,
+    #   "Busco_Re-Assembly": "C:100.0%[S:0.1%,D:99.9%],F:0.0%,M:0.0%,n:688",
+    #   "BuscoNucmer_Re-Assembly_Contigs": 669,
+    #   "BuscoNucmer_Re-Assembly_ContigLength": "54.11Mb",
+    #   "BuscoNucmer_Re-Assembly_Reads": 5424
+    # },
+
+    foreach my $family (keys %{$$hash{Families}})
+    {
+        if (-s "$abs_dir/$family/circos.png" && exists $$opts{base})
+        {
+            if ($$opts{upload})
+            {
+                system(qq[s3cmd put --acl-public --quiet "$abs_dir/$family/circos.png" s3://tolqc/$$opts{group}/$dir/$family.circos.png]) if ($$opts{group});
+            }
+            $$hash{"plot-$family"} = [ "$dir/$family.circos.png", "$family re-assembly: BUSCO circos plot" ];
+        }
+    }
+
+    if (exists $$opts{base})
+    {
+        $dir =~ s/$$opts{base}//;
+        $$hash{input} = $dir;
+    }
+    return $hash;
+}

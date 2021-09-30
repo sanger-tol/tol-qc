@@ -9,11 +9,17 @@ use File::Basename;
 
 my $bionano_json = `for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name genomic_data\`; do find -L \$dir -mindepth 3 -maxdepth 3 -type f -iname "*.cmap.gz" -o -iname "*.bnx.gz"; done | bionano2json -p`;
 
+my $ignore = {
+    'fAnaTes1_Saphyr_BssSI_VGL.cmap.gz' => 1,
+    'fDanKya3_Irys_BspQI_haplotype-aware.cmap.gz' => 1
+};
+
 my $accessions = load_accessions();
 my $bionano = decode_json($bionano_json);
 my $bionano_update;
 foreach my $rec (@$bionano)
 {
+    next if (exists $$ignore{$$rec{input}});
     if (exists $$accessions{$$rec{input}})
     {
         $$rec{analysis_accession} = $$accessions{$$rec{input}}->{analysis};
@@ -101,6 +107,7 @@ print $fh (qq[
                     <thead>
                         <tr>
                             <th data-field="group" data-sortable="true" data-filter-control="select">group</th>
+                            <th data-field="input" data-sortable="true" data-visible="false" data-filter-control="input">file</th>
                             <th data-field="specimen" data-sortable="true" data-filter-control="input">specimen</th>
                             <th data-field="platform" data-sortable="true" data-filter-control="select">platform</th>
                             <th data-field="model" data-sortable="true" data-filter-control="select">model</th>
@@ -207,7 +214,10 @@ print $fh (qq[
         }
         function ena_formatter(value) {
             if (value) {
-                if (value.match(/^[SE]RR/)) {
+                if (value.match(/^[SE]R/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                if (value.match(/^PRJ/)) {
                     return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
                 }
                 return value;
@@ -288,7 +298,7 @@ sub write_file_to_s3
 sub load_accessions
 {
     my $accessions;
-    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_bionano_subtrack.tsv];
+    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack_bionano.tsv];
     open(my $fh, "<$fofn") || die("Could not open file $fofn");
     while(<$fh>)
     {

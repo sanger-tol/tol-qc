@@ -257,13 +257,19 @@ print $fh (qq[
                 if (value.match(/^SAM/)) {
                     return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
                 }
+                if (value.match(/^[ES]RS/)) {
+                    return '<a href="ttps://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
                 return value;
             }
             return ""
         }
         function ena_formatter(value) {
             if (value) {
-                if (value.match(/^[SE]RR/)) {
+                if (value.match(/^[SE]R/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                if (value.match(/^PRJ/)) {
                     return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
                 }
                 return value;

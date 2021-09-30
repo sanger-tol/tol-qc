@@ -100,10 +100,16 @@ sub make_report
 
     my $spp = get_specimens($species,$group);
     my $sts = get_sts_record($species,$spp);
-    unless (scalar @$sts > 0)
+    my $gr;
+    foreach my $rec (@$sts)
+    {
+        next unless (exists $$rec{public_name} && $$rec{public_name});
+        $gr = $rec;
+    }
+    unless (scalar @$sts > 0 && $gr)
     {
         print STDERR "WARN: Golden record entry not found for $species... ";
-        $sts = fake_sts_record($species,$spp);
+        push @$sts, @{ fake_sts_record($species,$spp) };
         if (scalar @$sts > 0)
         {
             print STDERR "faking based on specimen names in genomic_data directory\n";
@@ -114,7 +120,6 @@ sub make_report
             next;
         }
     }
-    my $gr;
     foreach my $rec (@$sts)
     {
         next unless (exists $$rec{public_name} && $$rec{public_name});
@@ -249,12 +254,13 @@ sub generate_html
         system(qq[s3cmd --acl-public --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
     }
     my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
-    my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*summary.txt | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_summary.txt | grep -v busco | grep -v bionano | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : 'null';
     my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
     my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     $illumina_json = $illumina_json.$rnaseq_json;
     $illumina_json =~ s/\]\[/,/;
+    $illumina_json =~ s/^\[,/[/;
     $illumina_json = load_illumina_accessions($illumina_json) if ($illumina_json);
     $illumina_json  = 'null' unless ($illumina_json);
     $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
@@ -782,7 +788,7 @@ sub generate_html
                     return '<button type="button" class="btn btn-success" data-toggle="modal" data-target="#bold_modal">'+row.match[0].taxonomicidentification+' ('+parseFloat(row.match[0].similarity).toFixed(2)+')</button>';
                 }
             } else {
-                return '-';
+                return '';
             }
         }
         function tag_formatter(value, row) {
@@ -792,8 +798,11 @@ sub generate_html
             if (row["plot-plot"]) {
                 return '<a href="'+row["plot-plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-plot.log"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot.log"][0]+'" class="imggallery" width="75px"></a>';
             }
-            else {
+            else if (row["plot-transformed_linear_plot"]) {
                 return '<a href="'+row["plot-transformed_linear_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 linear plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-transformed_linear_plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-transformed_log_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-transformed_log_plot"][0]+'" class="imggallery" width="75px"></a>';
+            }
+            else {
+                return "";
             }
         }
         function gscope_detail_formatter(index, row) {
@@ -881,7 +890,10 @@ sub generate_html
         }
         function ena_formatter(value) {
             if (value) {
-                if (value.match(/^[SE]RR/)) {
+                if (value.match(/^[SE]R/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                if (value.match(/^PRJ/)) {
                     return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
                 }
                 return value;
@@ -1015,8 +1027,8 @@ sub load_illumina_accessions
 {
     my ($illumina_json) = @_;
     my $accessions;
-    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
-    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    my $prefix = qq[$ENV{TOLQCROOT}/track/tol_subtrack];
+    open(my $fh, "cat ${prefix}.fofn ${prefix}_pending.fofn |") || die("Could not open file $prefix");
     while(<$fh>)
     {
         chomp;
@@ -1044,13 +1056,12 @@ sub load_illumina_accessions
     return encode_json($illumina_update);
 }
 
-
 sub load_pacbio_accessions
 {
     my ($pacbio_json) = @_;
     my $accessions;
-    my $fofn = qq[$ENV{TOLQCROOT}/track/tol_subtrack.fofn];
-    open(my $fh, "<$fofn") || die("Could not open file $fofn");
+    my $prefix = qq[$ENV{TOLQCROOT}/track/tol_subtrack];
+    open(my $fh, "cat ${prefix}.fofn ${prefix}_pending.fofn |") || die("Could not open file $prefix");
     while(<$fh>)
     {
         chomp;
