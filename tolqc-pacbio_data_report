@@ -331,6 +331,7 @@ sub load_accessions
         my ($file,$run,$exp,$study,$sample,$date) = split /\t/;
         $file = basename($file);
         $file =~ s/\.(cr|b)am$//;
+        $file =~ s/\.reads$/.ccs/;
         $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
     }
     close $fh;

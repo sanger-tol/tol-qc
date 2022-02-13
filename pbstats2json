@@ -274,7 +274,7 @@ sub movie2lims
                 $base =~ s/\.png//;
                 $base =~ s/_plot//;
                 $img_path =~ s{$tolqc/?}{};
-                $$hash{"plot-$base"} = [ qq[https://tolqc.cog.sanger.ac.uk/$img_path], "$labels{$base}" ];
+                $$hash{"plot-$base"} = [ qq[https://tolqc.cog.sanger.ac.uk/$img_path], "$labels{$base}" ] if (exists $labels{$base});
                 if ($$opts{upload})
                 {
                     system(qq[s3cmd put --acl-public --quiet $img s3://tolqc/$img_path]);

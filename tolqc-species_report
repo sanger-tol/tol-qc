@@ -241,6 +241,209 @@ sub fake_sts_record
     return \@sts;
 }
 
+sub get_cobionts
+{
+    my ($data) = @_;
+    my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
+    my $marker_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -name marker | marker2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $readviz_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -name readviz | readviz2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $contigviz_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -name contigviz | contigviz2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+
+    my $cobionts_html = qq[
+            <h2><a name="cobionts">Cobionts</a></h2>
+
+            <div id="accordion">
+              <div class="card">
+                <div class="card-header" id="headingOne">
+                  <h5 class="mb-0">
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseOne" aria-expanded="false" aria-controls="collapseOne" aria-multiselectable="true">
+                      Mash screen
+                    </button>
+                  </h5>
+                </div>
+
+                <div id="collapseOne" class="collapse" aria-labelledby="headingOne">
+                  <div class="card-body">
+                    <p>Below are results from a screen of the PacBio data using <a href="https://mash.readthedocs.io/en/latest/tutorials.html#screening-a-read-set-for-containment-of-refseq-genomes">Mash screen</a> against RefSeq assemblies. Only results with identity over 90% are displayed.</p>
+                    <table id="mashscreen_table"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-buttons-align="left"
+                        data-pagination="true"
+                        data-page-size=10
+                        data-sort-name="identity"
+                        data-row-style="mashStyle"
+                        data-sort-order="desc">
+                        <thead>
+                            <tr>
+                                <th data-field="identity" data-sortable="true">identity</th>
+                                <th data-field="shared-hashes" data-sortable="true" data-visible="false">shared-hashes</th>
+                                <th data-field="median-multiplicity" data-sortable="true" data-visible="false">median-multiplicity</th>
+                                <th data-field="p-value" data-sortable="true" data-visible="false">p-value</th>
+                                <th data-field="query" data-sortable="true" data-visible="false">query</th>
+                                <th data-field="info" data-sortable="true">info</th>
+                            </tr>
+                        </thead>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header" id="headingTwo">
+                  <h5 class="mb-0">
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
+                      SSU Marker species
+                    </button>
+                  </h5>
+                </div>
+                <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo">
+                  <div class="card-body">
+                    <p>Species composition by small subunit (SSU) presence in the assembly.</p>
+
+                    <table id="marker_species_table"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-search="true"
+                        data-search-align="left"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-buttons-align="left"
+                        data-pagination="true"
+                        data-page-size=10
+                        data-row-style="markerStyle"
+                        data-sort-name="contig"
+                        data-sort-order="asc">
+                        <thead>
+                            <tr>
+                                <th data-field="specimen" data-sortable="true">specimen</th>
+                                <th data-field="contig" data-sortable="true">contig</th>
+                                <th data-field="SSUlength" data-sortable="true" data-formatter="local_formatter">SSU length</th>
+                                <th data-field="Classification" data-sortable="true" data-formatter="ssu_taxonomy_formatter">attributed taxonomy by SSU</th>
+                                <th data-field="Cluster" data-sortable="true" data-visible="false">cluster</th>
+                            </tr>
+                        </thead>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header" id="headingFour">
+                  <h5 class="mb-0">
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour">
+                      SSU Marker re-assembly
+                    </button>
+                  </h5>
+                </div>
+                <div id="collapseFour" class="collapse" aria-labelledby="headingFour">
+                  <div class="card-body">
+                    <p>Re-assembly of reads classified under each identified SSU Marker family.</p>
+
+                    <table id="marker_families_table"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-search="true"
+                        data-search-align="left"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-buttons-align="left"
+                        data-pagination="true"
+                        data-page-size=10
+                        data-sort-name="family"
+                        data-sort-order="asc">
+                        <thead>
+                            <tr>
+                                <th data-field="specimen" rowspan="2" data-valign="middle" data-sortable="true">specimen</th>
+                                <th data-field="family" rowspan="2" data-valign="middle" data-sortable="true" data-formatter="family_taxon_formatter">family</th>
+                                <th colspan="3">classified reads</th>
+                                <th colspan="4">original assembly</th>
+                                <th colspan="5">re-assembly</th>
+                            </tr>
+                            <tr>
+                                <th data-field="ClassifiedReads" data-sortable="true" data-formatter="local_formatter">count</th>
+                                <th data-field="ClassifiedReadsPercentage" data-sortable="true">(\%)</th>
+                                <th data-field="Busco_ClassifiedReads" data-sortable="true">BUSCO</th>
+
+                                <th data-field="Busco_Assembly" data-valign="middle" data-sortable="false">BUSCO</th>
+                                <th data-field="BuscoNucmer_Assembly_Contigs"data-valign="middle" data-sortable="false" data-formatter="local_formatter">contigs</th>
+                                <th data-field="BuscoNucmer_Assembly_ContigLength" data-valign="middle" data-sortable="false">contig length</th>
+                                <th data-field="BuscoNucmer_Assembly_Reads" data-valign="middle" data-sortable="false" data-formatter="local_formatter">reads</th>
+
+                                <th data-field="Busco_Re-Assembly" data-valign="middle" data-sortable="false">BUSCO</th>
+                                <th data-field="BuscoNucmer_Re-Assembly_Contigs"data-valign="middle" data-sortable="false" data-formatter="local_formatter">contigs</th>
+                                <th data-field="BuscoNucmer_Re-Assembly_ContigLength" data-valign="middle" data-sortable="false">contig length</th>
+                                <th data-field="BuscoNucmer_Re-Assembly_Reads" data-valign="middle" data-sortable="false" data-formatter="local_formatter">additional reads</th>
+                                <th data-field="plot" data-valign="middle" data-align='right' data-sortable="false" data-formatter="gscope_detail_formatter">circos</th>
+
+                            </tr>
+                        </thead>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header" id="headingThree">
+                  <h5 class="mb-0">
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseThree" aria-expanded="false" aria-controls="collapseThree">
+                      Readviz classification
+                    </button>
+                  </h5>
+                </div>
+                <div id="collapseThree" class="collapse" aria-labelledby="headingThree">
+                  <div class="card-body">
+                    <p>Visualisation of a classification of the PacBio reads using a variation autoencoder on the k-mer counts.</p>
+
+                    <table id="readviz_table" style="width: auto"
+                        data-sort-name="specimen"
+                        data-sort-order="desc">
+                        <thead>
+                            <tr>
+                                <th data-field="specimen" data-sortable="true">specimen</th>
+                                <th data-field="plot" data-align='right' data-sortable="false" data-formatter="gscope_detail_formatter">visualisation</th>
+                            </tr>
+                        </thead>
+                    </table>
+
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-header" id="headingFive">
+                  <h5 class="mb-0">
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseFive" aria-expanded="false" aria-controls="collapseFive">
+                      Contigviz classification
+                    </button>
+                  </h5>
+                </div>
+                <div id="collapseFive" class="collapse" aria-labelledby="headingFive">
+                  <div id="contigviz" class="card-body">
+                    <p>Canonical tetranucleotide counts for each contig or scaffold reduced to two dimensions with UMAP to allow visualisation.</p>
+                    <p>Features (colours represent quantile bins):
+                    <ul>
+                        <li><b>Hexamer</b>: Estimated coding density (expected to be higher in microbes than in animals).</li>
+                        <li><b>FastK</b>: The median number of times each 60-mer in the sequence occures across the whole assembly (illustrates repetitiveness)</li>
+                        <li><b>Unique_15mers</b>: Number of unique 15-mers per base pair (illustrates sequence diversity)</li>
+                        <li><b>Is_Connected</b>: Presence of at least one Hi-C connection to another scaffold (absence of connections can indicate contamination)</li>
+                        <li><b>Connections_Base</b>: Number of Hi-C connections per base pair</li>
+                    </ul>
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            <hr/>
+    ];
+
+    return ( $mashscreen_json, $marker_json, $readviz_json, $contigviz_json, $cobionts_html );
+}
+
 sub generate_html
 {
     my ($data) = @_;
@@ -256,7 +459,7 @@ sub generate_html
     my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_summary.txt | grep -v busco | grep -v bionano | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : 'null';
-    my $mashscreen_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.msh\.screen | xargs cat | sort -k6,6 | mashscreen2json` : 'null';
+    my ($mashscreen_json, $marker_json, $readviz_json, $contigviz_json, $cobionts_html) = get_cobionts($data);
     my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     $illumina_json = $illumina_json.$rnaseq_json;
     $illumina_json =~ s/\]\[/,/;
@@ -265,11 +468,12 @@ sub generate_html
     $illumina_json  = 'null' unless ($illumina_json);
     $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
 
-    my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats -o -name out_scaffolds_final.fa.stats -o -name scaffolds_FINAL.fasta.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
     my $taxon = decode_json($taxon_json);
+    $$taxon{lineage} =~ s/ //g;
     my $goat_json = `curl -sS -X GET "https://goat.genomehubs.org/api/v0.0.1/record?recordId=$$data{taxon_id}&result=taxon" -H "accept: application/json" | jq -c .`;
     chomp $goat_json;
     my $goat = decode_json($goat_json);
@@ -328,6 +532,18 @@ sub generate_html
         <script src="https://unpkg.com/bootstrap-table\@1.18.0/dist/bootstrap-table.min.js"></script>
         <script src="https://bootswatch.com/_assets/js/custom.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+        <style>
+            .mb-0 > button {
+              display: inline-block;
+              width: 100%;
+              text-align: left;
+              padding:0.75rem 1.25rem;
+            }
+            .card-header {
+              padding:0;
+            }
+        </style>
 
     </head>
     <body>
@@ -397,15 +613,15 @@ sub generate_html
                         <td>$$taxon{lineage}</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon">GoaT</a> genome size (M):</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> genome size (M):</th>
                         <td>$$goat_gs[0] ($$goat_gs[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon">GoaT</a> asm span (M):</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> asm span (M):</th>
                         <td>$$goat_asm[0] ($$goat_asm[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon">GoaT</a> chr no.:</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> chr no.:</th>
                         <td>$$goat_chr[0] ($$goat_chr[1])</td>
                     </tr>
               </tbody>
@@ -640,34 +856,7 @@ sub generate_html
 
             <hr/>
 
-            <h2><a name="Cobionts">Cobionts</a></h2>
-            <p>Below are results from a screen of the PacBio data using <a href="https://mash.readthedocs.io/en/latest/tutorials.html#screening-a-read-set-for-containment-of-refseq-genomes">Mash screen</a> against RefSeq assemblies.</p>
-            <div class="section">
-                <table id="mashscreen_table" style="width: auto"
-                    data-toggle="table"
-                    data-show-toggle="true"
-                    data-show-columns="true"
-                    data-show-columns-toggle-all="true"
-                    data-buttons-align="left"
-                    data-pagination="true"
-                    data-page-size=5
-                    data-sort-name="identity"
-                    data-row-style="mashStyle"
-                    data-sort-order="desc">
-                    <thead>
-                        <tr>
-                            <th data-field="identity" data-sortable="true">identity</th>
-                            <th data-field="shared-hashes" data-sortable="true" data-visible="false">shared-hashes</th>
-                            <th data-field="median-multiplicity" data-sortable="true" data-visible="false">median-multiplicity</th>
-                            <th data-field="p-value" data-sortable="true" data-visible="false">p-value</th>
-                            <th data-field="query" data-sortable="true" data-visible="false">query</th>
-                            <th data-field="info" data-sortable="true">info</th>
-                        </tr>
-                    </thead>
-                </table>
-            </div>
-
-            <hr/>
+            $cobionts_html
 
             <h2><a name="asm">Assemblies</a></h2>
             <p>In-progress assembly QC.</p>
@@ -916,6 +1105,18 @@ sub generate_html
                 return '';
             }
         }
+        function ssu_taxonomy_formatter(value) {
+            if (value) {
+                return '<ul style="margin: 0px"><li><b>ENA:</b> '+value.embl_ebi_ena+'</li><li><b>SILVA:</b> '+value.slv+'</li></ul>';
+            }
+            return ""
+        }
+        function family_taxon_formatter(value) {
+            if (value) {
+                return '<a href="https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/'+value+'">'+value+'</a>';
+            }
+            return "";
+        }
 
         var taxon = $taxon_json;
         \$('#taxon_table').bootstrapTable({data: [ taxon ]});
@@ -953,6 +1154,62 @@ sub generate_html
             \$('#mashscreen_table').bootstrapTable({data: mashscreen});
         }
 
+        if ($readviz_json) {
+            var readviz = $readviz_json;
+            \$('#readviz_table').bootstrapTable({data: readviz});
+        }
+
+        if ($contigviz_json) {
+            var contigviz = $contigviz_json;
+            var target = document.getElementById("contigviz");
+            var embed = '<ul>';
+            for (var i = 0; i < contigviz.length; i++)  {
+                embed += '<li><h6>'+contigviz[i].asm+'</h6><div class="embed-responsive embed-responsive-21by9">';
+                embed += '    <iframe class="embed-responsive-item" src="'+contigviz[i].input+'" allowfullscreen></iframe>';
+                embed += '</div></li>';
+            }
+            embed += '</ul>';
+            target.innerHTML += embed;
+        }
+
+        if ($marker_json) {
+            var marker = $marker_json;
+            \$('#marker_species_table').bootstrapTable({data: marker.species});
+            \$('#marker_families_table').bootstrapTable({data: marker.families});
+        }
+        function markerStyle(row, index) {
+            if (row.Classification)
+            {
+                if (row.Classification.embl_ebi_ena.match(/Chloroplast/) || row.Classification.slv.match(/Chloroplast/)) {
+                    return {
+                        classes: 'table-success',
+                    }
+                }
+                if (row.Classification.embl_ebi_ena.match(/Mitochondria/) || row.Classification.slv.match(/Mitochondria/)) {
+                    return {
+                        classes: 'table-primary',
+                    }
+                }
+                if (row.Classification.embl_ebi_ena.match(/Bacteria/) && row.Classification.slv.match(/Bacteria/)) {
+                    return {
+                        classes: 'table-warning',
+                    }
+                }
+                if (row.Classification.embl_ebi_ena.match(/Unclassified/) && row.Classification.slv.match(/Unclassified/)) {
+                    return {
+                        classes: 'table-info',
+                    }
+                }
+                var lineage = '$$taxon{lineage}';
+                var classification = row.Classification.embl_ebi_ena;
+                if (!lineage.startsWith(classification)) {
+                    return {
+                        classes: 'table-danger',
+                    }
+                }
+            }
+            return {};
+        }
         if (pacbio && pacbio[0].match) {
             \$('#bold_table').bootstrapTable({data: pacbio[0].match});
         }
@@ -1056,6 +1313,7 @@ sub load_illumina_accessions
     return encode_json($illumina_update);
 }
 
+
 sub load_pacbio_accessions
 {
     my ($pacbio_json) = @_;
@@ -1068,6 +1326,7 @@ sub load_pacbio_accessions
         my ($file,$run,$exp,$study,$sample,$date) = split /\t/;
         $file = basename($file);
         $file =~ s/\.(cr|b)am$//;
+        $file =~ s/\.reads$/.ccs/;
         $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
     }
     close $fh;

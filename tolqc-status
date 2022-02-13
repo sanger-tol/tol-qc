@@ -102,21 +102,35 @@ sub status
             return;
         }
         my $asm = $asms[-1];
+        my $asmdir = dirname(dirname($asm));
+        if (-s "$asmdir/scaffolding/yahs/out.break.yahs/out_scaffolds_final.fa.stats")
+        {
+            # print STDERR qq[Detected YaHs scaffolds\n];
+            $asm = "$asmdir/scaffolding/yahs/out.break.yahs/out_scaffolds_final.fa";
+        }
+        else
+        {
+            # print STDERR qq[Did not detect YaHs scaffolds [$asmdir/scaffolding/yahs/out.break.yahs/out_scaffolds_final.fa.stats]\n];
+        }
+        # print STDERR "$asm\n";
         my $asm_json = `echo $asm.stats | asm2json -p`;
         my $stats = decode_json($asm_json);
         $stats = $stats->[0];
         my $busco = exists $$stats{busco} ? $$stats{busco}[0]{busco} : '';
         my $qv = exists $$stats{merqury}{qv} ? $$stats{merqury}{qv} : '';
         my $completeness = exists $$stats{merqury}{completeness} ? $$stats{merqury}{completeness} : '';
-        my $log = dirname( dirname $asm ) . "/$specimen.log";
+        my $log = "$asmdir/$specimen.log";
         my $version = '';
         if (-s $log)
         {
             my $version_line = `grep "Version:" $log`; chomp $version_line;
             ($version) = $version_line =~ m/M::main] Version: (\S+)$/;
             $version = "hifiasm-$version+purge" if $version;
+            $version .= '+polish' if ($version && -s "$asmdir/polishing");
+            $version .= '+yahs' if ($version && $asm =~ /out.break.yahs/);
+            $version .= '+salsa' if ($version && $asm =~ /out.break.salsa/);
         }
-        if (exists $$stats{N50})
+        if (exists $$stats{N50} || ($$stats{scaffold_N50} && exists $$stats{contig_N50}))
         {
             print join("\t", $specimen, $$stats{contig_N50} / 1e6, $$stats{contig_n}, $$stats{scaffold_N50} / 1e6, $$stats{scaffold_n}, $$stats{scaffold_largest} / 1e6, $$stats{scaffold_sum}/1e6, $busco, $qv, $completeness, $version . "\n");
         }

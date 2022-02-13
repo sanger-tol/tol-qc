@@ -116,12 +116,82 @@ sub parse_marker
         $$hash{SpeciesPresent} = $$json{SpeciesPresent};
         $$hash{Families} = $$json{Families};
     }
-    elsif (-s "$abs_dir/$specimen.ProkSSU.reduced.SILVA.genus.txt")
+    elsif (-s "$abs_dir/$specimen.ProkSSU.reduced.SILVA.tax")
     {
-        # parse this file
-        $$hash{SpeciesPresent} = {};
+        my $res = {};
+        my $tax = '';
+        # parse classification file
+        open(my $fh, "<$abs_dir/$specimen.ProkSSU.reduced.SILVA.tax");
+        while(<$fh>)
+        {
+            chomp;
+            if (/^name/)
+            {
+                ($tax) = $_ =~ m/lca_tax_(.+)$/;
+                next;
+            }
+            my ($ctg, $class) = split /\t/;
+            $$res{$ctg}{$tax} = $class;
+            $$res{$ctg}{Cluster} = [];
+        }
+        close($fh);
+        if (-s "$abs_dir/$specimen.ProkSSU.reduced.fa.clstr")
+        {
+            my $id = '';
+            my $size = 0;
+            my $cluster = {};
+            open(my $fh2, "<$abs_dir/$specimen.ProkSSU.reduced.fa.clstr");
+            while(<$fh2>)
+            {
+                chomp;
+                if (/^>Cluster/)
+                {
+                    if ($id)
+                    {
+                        $$res{$id}{SSUlength} = $size;
+                        $$res{$id}{Cluster} = [ keys %$cluster ];
+                    }
+                    $id = '';
+                    $size = 0;
+                    $cluster = {};
+                }
+                else
+                {
+                    my ($nt,$ctg) = m/(\d+)nt, >(\S+)\.\.\./;
+                    $$cluster{$ctg} = 1;
+                    if (exists $$res{$ctg})
+                    {
+                        $id = $ctg;
+                        $size = $nt;
+                    }
+                }
+            }
+            close($fh2);
+            if ($id)
+            {
+                $$res{$id}{SSUlength} = $size;
+                $$res{$id}{Cluster} = [ keys %$cluster ];
+            }
+        }
+        $$hash{SpeciesPresent} = $res;
         $$hash{Families} = {};
     }
+
+
+#>Cluster 0
+#0       1959nt, >ptg005451l... *
+#1       1959nt, >atg000429l... at 1:1959:1:1959/+/100.00%
+#>Cluster 1
+#0       1277nt, >ptg000338l... at 1:1277:1:1280/+/99.77%
+#1       1891nt, >ptg000948l... at 1:1891:1:1892/+/99.74%
+#2       619nt, >ptg002447l... at 1:619:1275:1892/+/99.84%
+#3       1891nt, >ptg003503l... at 1:1891:1:1892/+/99.74%
+#4       1892nt, >ptg003826l... *
+#5       1890nt, >ptg003852l... at 1:1890:1:1892/+/99.79%
+#6       1890nt, >ptg003888l... at 1:1890:1:1892/+/99.79%
+#7       1890nt, >ptg004255l... at 1:1890:1:1892/+/99.79%
+#8       1890nt, >ptg004335l... at 1:1890:1:1892/+/99.79%
+
 
     # "Comamonadaceae": {
     #   "ClassifiedReads": 51074,
