@@ -469,6 +469,7 @@ sub generate_html
     $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
 
     my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats -o -name out_scaffolds_final.fa.stats -o -name scaffolds_FINAL.fasta.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $mito_json = -d 'working' ? `find working -mindepth 3 -maxdepth 3 -type f -name final_mitogenome.fasta | mitohifi2json -p` : 'null';
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
@@ -899,6 +900,44 @@ sub generate_html
 
             <hr/>
 
+            <h2><a name="mito">Organelles</a></h2>
+            <p>In-progress organelle results from MitoHiFi2.</p>
+            <div class="section" id="mito">
+                <div class="mitotoolbar">
+                    <button id="mitobutton" class="btn btn-secondary">show details</button>
+                    <button id="mitobutton2" class="btn btn-secondary">hide details</button>
+                </div>
+                <table id="mito_table"
+                        data-toggle="table"
+                        data-show-toggle="true"
+                        data-show-columns="true"
+                        data-show-columns-toggle-all="true"
+                        data-buttons-align="left"
+                        data-sort-order="asc"
+                        data-search="true"
+                        data-search-align="left"
+                        data-detail-view="true"
+                        data-detail-view-icon="false"
+                        data-detail-view-by-click="true"
+                        data-toolbar=".mitotoolbar"
+                        data-toolbar-align="right"
+                        data-detail-formatter="mitodetail_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="specimen" data-sortable="true">specimen</th>
+                            <th data-field="asm" data-sortable="true">asm</th>
+                            <th data-field="date" data-sortable="true">date</th>
+                            <th data-field="mitogenome_length" data-sortable="true" data-formatter="local_formatter" data-align="right">length</th>
+                            <th data-field="mitogenome_gene_count" data-sortable="true" data-formatter="local_formatter" data-align="right">genes</th>
+                            <th data-field="frameshifts_found" data-sortable="true">frameshifts</th>
+                            <th data-field="reference_accession" data-sortable="true" data-formatter="mitoref_formatter" data-align="right">reference</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
             <div class="footer">
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
@@ -1077,6 +1116,29 @@ sub generate_html
             }
             return ""
         }
+        function mitoref_formatter(value, row) {
+            if (value) {
+                return '<a href="https://www.ebi.ac.uk/ena/browser/api/embl/'+value+'">'+row.reference_organism+'</a>; '+local_formatter(row.reference_length)+' bp; '+row.reference_gene_count+' genes';
+            }
+            return ""
+        }
+        function mitodetail_formatter(index, row) {
+            var mitodetail = '<pre>'+row.txt+'</pre>';
+            return mitodetail
+        }
+        function gscope_detail_formatter(index, row) {
+            var gscope_plots = '';
+            var x;
+            for (x in row) {
+                if (x.match(/^plot/)) {
+                    var img = row[x][0];
+                    var label = row[x][1];
+                    gscope_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+label+' '+row.specimen+'" data-toggle="lightbox" data-gallery="asm'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return gscope_plots;
+        }
+
         function ena_formatter(value) {
             if (value) {
                 if (value.match(/^[SE]R/)) {
@@ -1177,6 +1239,10 @@ sub generate_html
             \$('#marker_species_table').bootstrapTable({data: marker.species});
             \$('#marker_families_table').bootstrapTable({data: marker.families});
         }
+        if ($mito_json) {
+            var mito = $mito_json;
+            \$('#mito_table').bootstrapTable({data: mito});
+        }
         function markerStyle(row, index) {
             if (row.Classification)
             {
@@ -1268,6 +1334,18 @@ sub generate_html
             })
             \$asmbutton2.click(function () {
                 \$('#asm_table').bootstrapTable('collapseAllRows')
+            })
+        })
+
+        var \$mitobutton = \$('#mitobutton')
+        var \$mitobutton2 = \$('#mitobutton2')
+
+        \$(function() {
+            \$mitobutton.click(function () {
+                \$('#mito_table').bootstrapTable('expandAllRows')
+            })
+            \$mitobutton2.click(function () {
+                \$('#mito_table').bootstrapTable('collapseAllRows')
             })
         })
 
