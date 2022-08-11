@@ -93,10 +93,10 @@ sub parse_asmstats
     my $movie = '';
     my $barcode = '';
     my $pipeline = '';
-    ($movie,$pipeline,$barcode) = $base =~ m/([^\.]+)\.(ccs|subreads)\.([^\.]+)\.stats$/;
+    ($movie,$pipeline,$barcode) = $base =~ m/([^\.]+)\.(ccs|subreads|fl_transcripts)\.([^\.]+)(\.rmdup)?\.stats$/;
     unless ($movie)
     {
-        ($movie,$pipeline) = $base =~ m/([^\.]+)\.(ccs|subreads)\.stats$/;
+        ($movie,$pipeline) = $base =~ m/([^\.]+)\.(ccs|subreads)(\.rmdup)?\.stats$/;
     }
     my ($instrument, $dt);
     if ($movie =~ /_[pX][0123]$/)
@@ -117,7 +117,7 @@ sub parse_asmstats
 
     my $stats = { movie => $movie, barcode => $barcode, date => $dt, instrument => $instrument, a => 0+0, c => 0+0, g => 0+0, t => 0+0, ( %$movie_info ) };
     $$stats{tag_index} = $tag_index if ($tag_index);
-    my ($species,$specimen,$source) = $input =~ m{([^\/]+)/genomic_data/([^\/]+)/([^\/]+)/stats};
+    my ($species,undef,$specimen,$source) = $input =~ m{([^\/]+)/(genomic_data|transcriptomic_data)/([^\/]+)/([^\/]+)/stats};
     $species =~ s/_/ /g;
     $$stats{species} = $species if ($species);
     if ($species && !(exists $$stats{species_name} && $$stats{species_name}))
@@ -136,15 +136,26 @@ sub parse_asmstats
         $$stats{model}  = 'Sequel II' if ($instrument =~ /^m6/);
         $$stats{model} .= 'e' if ($instrument =~ /e$/);
     }
-    if ($pipeline eq 'ccs')
+    if (exists $$stats{pipeline_id_lims} && $$stats{pipeline_id_lims} && $$stats{pipeline_id_lims} ne 'NULL')
+    {
+        $$stats{pipeline} = $$stats{pipeline_id_lims};
+    }
+    elsif ($pipeline eq 'ccs')
     {
         $$stats{pipeline} = 'PacBio - HiFi';
+    }
+    elsif ($pipeline eq 'fl_transcripts')
+    {
+        $$stats{pipeline} = 'PacBio - IsoSeq';
     }
     elsif ($pipeline eq 'subreads')
     {
         $$stats{pipeline} = 'PacBio - CLR';
     }
-
+    else
+    {
+        $$stats{pipeline} = '-';
+    }
     open(my $fh, "<$input") || die("Could not open $input");
     while (<$fh>)
     {
@@ -215,6 +226,42 @@ sub parse_asmstats
             $$stats{match} = $$match{match};
         }
     }
+    my $dups = 0;
+    my $dup_file = $input;
+    $dup_file =~ s/stats$/txt/;
+    if (-s $dup_file)
+    {
+        # LIBRARY         READS    UNIQUE MOLECULES    DUPLICATE READS
+        # ----------  ----------  ------------------  -----------------
+        # TRAC-2-503     2481830     2449542 (98.7%)       32288 (1.3%)
+        # ----------  ----------  ------------------  -----------------
+        # TOTAL          2481830     2449542 (98.7%)       32288 (1.3%)
+        open(my $fh, "<$dup_file") || die("Could not open $dup_file");
+        while (<$fh>)
+        {
+            chomp;
+            next unless (/\d+/);
+            my (undef,$reads,undef,undef,$dup_reads) = split /\s+/;
+            if ($reads && $dup_reads)
+            {
+                $dups = 100*$dup_reads/$reads;
+                last;
+            }
+        }
+        close($fh);
+    }
+    $$stats{dups} = $dups;
+
+    my $filt = 0;
+    my $block = $input;
+    $block =~ s/stats$/blocklist/;
+    $block =~ s/stats/fasta/;
+    if (-s $block)
+    {
+        $filt = `cat $block | wc -l`;
+        chomp $filt;
+    }
+    $$stats{filtered} = $$stats{n} ? 100*$filt/$$stats{n} : 0;
 
     if (exists $$opts{base})
     {
@@ -229,6 +276,7 @@ sub movie2lims
     my ($opts,$movie,$barcode) = @_;
     my $hash = {};
     my $tolqc = $ENV{TOLQCROOT};
+    $barcode = 'NULL' unless ($barcode);
 
     my ($subreadset_xml) = glob("$tolqc/seq/pacbio/*/*/$movie.*readset.xml");
     if ($subreadset_xml && -s $subreadset_xml)
@@ -306,6 +354,12 @@ sub movie2lims
         $well =~ s/0//;
     }
     close($fh);
+    my %pipeline_map = (
+        'PacBio_Ultra_Low_Input' => 'PacBio - HiFi (ULI)',
+        'PacBio_Ultra_Low_Input_mplx' => 'PacBio - HiFi (ULI mplx)',
+        'Pacbio_HiFi' => 'PacBio - HiFi',
+        'Pacbio_HiFi_mplx' => 'PacBio - HiFi (mplx)',
+    );
     my $lims = -s "$tolqc/track/tol_pacbio_data.lims.tsv.part" ? "$tolqc/track/tol_pacbio_data.lims.tsv.part" : "$tolqc/track/tol_pacbio_data.lims.tsv";
     open my $fh2, qq[awk -F"\\t" '\$12=="$$hash{run}" && \$13=="$well" && \$9~/$barcode/' $lims | sed 's/NULL//g; s/ orion//g' |];
     while (<$fh2>)
@@ -319,6 +373,7 @@ sub movie2lims
         $$hash{sanger_id} = $F[0];
         $$hash{tag_sequence} = $F[9];
         $$hash{library_load_name} = $F[10];
+        $$hash{pipeline_id_lims} = (scalar @F>=16 && exists $pipeline_map{"$F[15]"}) ? $pipeline_map{"$F[15]"} : $F[15];
     }
     close($fh2);
     # unless ($$opts{minimal})

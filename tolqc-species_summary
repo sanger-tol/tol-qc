@@ -22,7 +22,7 @@ sub gather_data
 {
     my ($root) = @_;
     my $list;
-    open(my $fh, qq[find -L $root/data -mindepth 4 -maxdepth 4 -type d -name genomic_data | cut -d'/' -f7,8,9 |]);
+    open(my $fh, qq[find -L $root/data -mindepth 4 -maxdepth 4 -type d -name genomic_data -o -name transcriptomic_data | cut -d'/' -f7,8,9 | sort -u |]);
     while(<$fh>)
     {
         chomp;
@@ -32,13 +32,30 @@ sub gather_data
         $species =~ s/_/ /g;
 
         my $spp = get_specimens($species,$group);
+        my $data_types = get_data_types($species,$group);
+        my $assembly_status = get_assembly_status($species,$group,$data_types);
         my $sts = get_sts_record($species,$spp);
+        my $common_name_map = get_common_name_map();
         if (scalar @$sts > 0)
         {
             if ($$sts[0]->{scientific_name} ne $species)
             {
                 print STDERR "WARN: STS records not found for species $species... ";
                 print STDERR "but specimen records found for $$sts[0]->{public_name} as species $$sts[0]->{scientific_name}\n";
+            }
+            unless ($$sts[0]->{taxon_id})
+            {
+                print STDERR "WARN: STS records has no taxon id for species $species... ";
+                $sts = fake_sts_record($species,$spp);
+                if (scalar @$sts > 0)
+                {
+                    print STDERR "faking based on specimen names in genomic_data directory\n";
+                }
+                else
+                {
+                    print STDERR "skipping\n";
+                    next;
+                }
             }
         }
         else
@@ -61,33 +78,67 @@ sub gather_data
         {
             $specimens{ $specimen->{public_name} }++;
         }
-        $$sts[0]->{common_name} =~ s/^NA$//;
-        $$sts[0]->{common_name} =~ s/^UNKNOWN$//;
+        if (exists $$sts[0]->{common_name})
+        {
+            $$sts[0]->{common_name} =~ s/^NA$//;
+            $$sts[0]->{common_name} =~ s/^UNKNOWN$//;
+        }
         my $data = {
             name        => $species,
             _name       => $species_u,
-            common_name => $$sts[0]->{common_name},
+            common_name => (exists $$common_name_map{$species_u} && exists $$common_name_map{$species_u}{common_name}) ? $$common_name_map{$species_u}{common_name} : $$sts[0]->{common_name},
             taxon       => $$sts[0]->{taxon_id},
+            genus       => ucfirst(lc($$sts[0]->{genus})),
             family      => ucfirst(lc($$sts[0]->{family})),
             order       => ucfirst(lc($$sts[0]->{order_or_group})),
             phylum      => ucfirst(lc($$sts[0]->{phylum})),
             group       => $group,
-            specimens   => join(',', sort keys %specimens)
+            specimens   => join(',', sort keys %specimens),
+            data_types  => $data_types,
+            asm         => $assembly_status
         };
-        # if (-s qq[$root/status/$group/$species_u/status.json])
-        # {
-        #     my $status_json = `cat $root/status/$group/$species_u/status.json | jq -c .`;
-        #     $$data{status} = decode_json($status_json);
-        #     foreach my $tech (keys %{$$data{status}})
-        #     {
-        #         $$data{status}{hic} = $$data{status}{"$tech"} if ($tech =~ m/hic-/);
-        #     }
-        # }
+        unless ($$data{genus})
+        {
+            $$data{genus} = $$common_name_map{$species_u}{genus} if (exists $$common_name_map{$species_u} && exists $$common_name_map{$species_u}{genus});
+        }
+        unless ($$data{family})
+        {
+            $$data{family} = $$common_name_map{$species_u}{family} if (exists $$common_name_map{$species_u} && exists $$common_name_map{$species_u}{family});
+        }
+        unless ($$data{order})
+        {
+            $$data{order} = $$common_name_map{$species_u}{order} if (exists $$common_name_map{$species_u} && exists $$common_name_map{$species_u}{order});
+        }
+        unless ($$data{phylum})
+        {
+            $$data{phylum} = $$common_name_map{$species_u}{phylum} if (exists $$common_name_map{$species_u} && exists $$common_name_map{$species_u}{phylum});
+        }
         push @$list, $data;
     }
     close($fh);
     my $reports_json = encode_json($list);
     return $reports_json;
+}
+
+sub get_common_name_map
+{
+    my $map;
+    my $url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTU-En_URbYPtfyjBueQhnz7wYHt-OHVxvRyv9tNvCUPCTX9EEzxOL41QCUh6hgVNv-Vv_gLSAMJXv-/pub?gid=1442224132&single=true&output=tsv';
+    open(my $fh, qq[curl -s -L '$url' | cut -f8,12,17-20 |]);
+    while(<$fh>)
+    {
+        chomp;
+        my ($species,$common_name, $genus, $family, $order, $phylum) = split /\t/;
+        next unless $species;
+        $species =~ s/ /_/g;
+        $$map{$species}{common_name} = $common_name if ($common_name);
+        $$map{$species}{genus} = $genus if ($genus);
+        $$map{$species}{family} = $family if ($family);
+        $$map{$species}{order} = $order if ($order);
+        $$map{$species}{phylum} = $phylum if ($phylum);
+    }
+    close($fh);
+    return $map;
 }
 
 sub get_sts_record
@@ -126,16 +177,98 @@ sub get_specimens
     my ($species,$project) = @_;
     my $species_u = $species;
     $species_u  =~ s/ /_/g;
-    my @dirs = glob( "$root/data/$project/$species_u/genomic_data/*" );
+    my @dirs = glob( "$root/data/$project/$species_u/*_data/*" );
     return [] unless @dirs; # no specimens found
 
-    my @specimens;
+    my %specimens;
     foreach my $dir (@dirs)
     {
         next unless -d $dir;
-        push @specimens, basename($dir);
+        $specimens{basename($dir)}++;
     }
-    return \@specimens;
+    return [ sort keys %specimens ];
+}
+
+sub get_data_types
+{
+    my ($species,$project) = @_;
+    my $species_u = $species;
+    $species_u  =~ s/ /_/g;
+    my @dirs = glob( "$root/data/$project/$species_u/*_data/*/*" );
+
+    my $data_types = {
+        'pacbio' => 0,
+        'hic' => 0,
+        '10x' => 0,
+        'htag' => 0,
+        'ont' => 0,
+        'bionano' => 0,
+        'rna-seq' => 0,
+        'iso-seq' => 0,
+    };
+    return $data_types unless @dirs; # no data found
+    foreach my $dir (@dirs)
+    {
+        next unless -d $dir;
+        my $type = basename($dir);
+        $type = 'iso-seq' if ($dir =~ /transcriptomic/ && $type eq 'pacbio');
+        $type = 'hic' if ($type =~ /^hic/);
+        $type = 'htag' if ($type =~ /^htag/);
+        $$data_types{$type} = 1;
+    }
+    return $data_types;
+}
+
+sub get_assembly_status
+{
+    my ($species,$project,$data_types) = @_;
+    my $species_u = $species;
+    $species_u  =~ s/ /_/g;
+    my @dirs = glob( "$root/data/$project/$species_u/assembly/*/*" );
+    my @working = glob( "$root/data/$project/$species_u/working/*" );
+
+    my $status = { name => '', stage => '-', accession => '' };
+    my $stage_high = 0;
+    my $stage = {
+        'working' => 1,
+        'draft' => 2,
+        'curated' => 3,
+        'release' => 4,
+    };
+    return $status unless (scalar @dirs || scalar @working); # no assemblies found
+    foreach my $dir (@dirs, @working)
+    {
+        next unless -d $dir;
+        my $asm = basename($dir);
+        $dir = dirname($dir);
+        my $type = basename($dir);
+        unless (exists $$stage{$type})
+        {
+            print STDERR "WARN: unknown assembly type [$type] in directory $dir\n";
+            next;
+        }
+        next if ($$stage{$type} < $stage_high);
+        if ($type eq 'release')
+        {
+            my $acc_file = qq[$dir/$asm/insdc/ACCESSION];
+            my $acc = -s $acc_file ? `cat $acc_file` : ''; chomp $acc;
+            $status = { name => $asm, stage => 'RELEASED', accession => $acc };
+        }
+        elsif ($type eq 'curated')
+        {
+            $status = { name => $asm, stage => 'CURATED', accession => '' };
+        }
+        elsif ($type eq 'draft')
+        {
+            $status = { name => $asm, stage => 'DRAFT', accession => '' } if ($$data_types{pacbio} && $$data_types{hic});
+        }
+        elsif ($type eq 'working')
+        {
+            $status = { name => $asm, stage => 'IN PROGRESS', accession => '' } if ($$data_types{pacbio} && $$data_types{hic});
+        }
+        $stage_high = $$stage{$type};
+    }
+    return $status;
 }
 
 sub fake_sts_record
@@ -143,22 +276,43 @@ sub fake_sts_record
     my ($species,$specimens) = @_;
     return [] unless @$specimens;
 
-    # TODO: add some memory so we don't keep calling the same API over and over
-    my $species_pct = $species;
-    $species_pct  =~ s/ /%20/g;
-    my $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct"`;
-    return [] if ($spp_json eq 'No results.');
-    $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct" | jq -c .`;
-    my $spp = decode_json($spp_json);
-    my $tx = ''; my $cn = ''; my $family = ''; my $order = ''; my $phylum = '';
-    if (($spp && exists $spp->[0] && exists $spp->[0]->{taxId}))
+    my %txmap = (
+        'Rhamphochromis sp. chilingali' => '454631',
+        'Tropheops mauve' => '286600',
+        'Lepidonotothen nudifrons' => '83203',
+        'Prorocentrum lima' => '39448'
+    );
+
+    my $info;
+    my $tx = ''; my $cn = ''; my $genus = ''; my $family = ''; my $order = ''; my $phylum = '';
+    if (exists $txmap{"$species"})
+    {
+        $tx = $txmap{"$species"};
+        my $tx_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$tx"`;
+        $info = decode_json($tx_json);
+    }
+    else
+    {
+        # TODO: add some memory so we don't keep calling the same API over and over
+        my $species_pct = $species;
+        $species_pct  =~ s/ /%20/g;
+        my $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct"`;
+        return [] if ($spp_json eq 'No results.');
+        $spp_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/scientific-name/$species_pct" | jq -c .`;
+        my $spp = decode_json($spp_json);
+        if (($spp && exists $spp->[0] && exists $spp->[0]->{taxId}))
+        {
+            $info = $spp->[0];
+        }
+    }
+    if ($info)
     {
         my %rank;
-        $tx = $spp->[0]->{taxId};
-        if (exists $spp->[0]->{commonName}) { $cn = $spp->[0]->{commonName}; }
-        if (exists $spp->[0]->{lineage})
+        $tx = $info->{taxId};
+        if (exists $info->{commonName}) { $cn = $info->{commonName}; }
+        if (exists $info->{lineage})
         {
-            my $lineage =$spp->[0]->{lineage};
+            my $lineage = $info->{lineage};
             $lineage=~ s/; $//;
             my @taxonomy = split("; ", $lineage);
             foreach my $taxon (@taxonomy)
@@ -171,6 +325,7 @@ sub fake_sts_record
                 }
             }
         }
+        $genus = exists $rank{genus} ? $rank{genus} : '';
         $family = exists $rank{family} ? $rank{family} : '';
         $order = exists $rank{order} ? $rank{order} : '';
         $phylum = exists $rank{phylum} ? $rank{phylum} : '';
@@ -179,7 +334,7 @@ sub fake_sts_record
     my @sts;
     foreach my $specimen (@$specimens)
     {
-        push @sts, { public_name => $specimen, taxon_id => $tx, common_name => $cn, family => $family, order_or_group => $order, phylum => $phylum  };
+        push @sts, { public_name => $specimen, taxon_id => $tx, common_name => $cn, genus => $genus, family => $family, order_or_group => $order, phylum => $phylum  };
     }
     return \@sts;
 }
@@ -229,45 +384,46 @@ sub generate_landing_page
           height: 20px;
           width: 20px;
           background-color: #bbb;
-          border-radius: 50\%;
+          color: #bbb;
+          border-radius: 50%;
+          display: inline-block;
+        }
+        .empty {
+          height: 20px;
+          width: 20px;
+          background-color: #ffffff;
+          color: #ffffff;
+          border-radius: 50%;
           display: inline-block;
         }
         </style>
     </head>
     <body>
         <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
-            <div class="container">
+            <div class="container-fluid">
                 <a href="/" class="navbar-brand">Tree of Life QC</a>
                 <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
+                <div class="collapse navbar-collapse" id="navbarResponsive">
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link" href="/">Species</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/pacbio/">PacBio</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/illumina/">Illumina</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/bionano/">BioNano</a>
+                        </li>
+                </div>
             </div>
         </div>
 
-        <div class="container">
-            <div class="page-header" id="banner">
-                <div class="row">
-                    <div class="col-lg-8 col-md-7 col-sm-6">
-                        <h1>Technology run reports</h1>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section" id="tech_reports">
-                <div class="col-lg-8">
-                <div class="bs-component">
-                    <div class="list-group list-group-horizontal">
-                        <a href="/illumina/" class="list-group-item list-group-item-action">Illumina</a>
-                        <a href="/pacbio/" class="list-group-item list-group-item-action">PacBio</a>
-                        <a href="/bionano/" class="list-group-item list-group-item-action">BioNano</a>
-                        <a href="/ont/" class="list-group-item list-group-item-action disabled">ONT</a>
-                    </div>
-                </div>
-                </div>
-            </div>
-
-            <hr/>
-
+        <div class="container-fluid">
             <div class="page-header" id="banner">
                 <div class="row">
                     <div class="col-lg-8 col-md-7 col-sm-6">
@@ -276,12 +432,12 @@ sub generate_landing_page
                 </div>
             </div>
 
+            <p>ToLQC species reports for data generated by the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a> at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a>.
+            Currently, the status indicator on this page for each data type (PacBio, Hi-C, etc) should only be interpreted as meaning there is <i>some</i> data of that type available for the species - not that it has passed QC or is of sufficient quality and quantity to proceed to assembly.</p>
+
             <div class="section" id="reports">
                 <table id="reports_table"
-                        data-url="data.json"
-                        data-show-export="true"
-                        data-export-data-type="all"
-                        data-export-types=['json','xml','csv','txt','excel']
+                        data-url="/data.json"
                         data-pagination="true"
                         data-search="true"
                         data-search-align="left"
@@ -292,23 +448,29 @@ sub generate_landing_page
                         data-show-columns-toggle-all="true"
                         data-sort-name="name"
                         data-sort-order="asc"
+                        data-filter-control="true"
                         data-toolbar-align="right">
                     <thead>
                         <tr>
-                            <th data-field="group" data-sortable="true" data-filter-control="true">group</th>
-                            <th data-field="name" data-sortable="true" data-formatter="species_link_formatter">species</th>
-                            <th data-field="common_name" data-sortable="true">common name</th>
-                            <th data-field="taxon" data-sortable="true" data-formatter="taxon_link_formatter">taxon</th>
-                            <th data-field="family" data-sortable="true">family</th>
-                            <th data-field="order" data-sortable="true">order</th>
-                            <th data-field="phylum" data-sortable="true">phylum</th>
-<!--                             <th data-field="status.pacbio" data-sortable="true" data-align="center">PacBio</th>
-                            <th data-field="status.10x" data-sortable="true" data-align="center">10XG</th>
-                            <th data-field="status.hic" data-sortable="true" data-align="center">Hi-C</th>
- -->                            <!-- <th data-field="status.pacbio" data-sortable="true" data-align="center" data-formatter="status_formatter">PacBio</th> -->
-                            <!-- <th data-field="status.10x" data-sortable="true" data-align="center" data-formatter="status_formatter">10XG</th> -->
-                            <!-- <th data-field="status.hic" data-sortable="true" data-align="center" data-formatter="status_formatter">Hi-C</th> -->
-                            <th data-field="specimens" data-sortable="true" data-visible="false">specimens</th>
+                            <th data-field="group" data-sortable="true" data-filter-control="input">Project</th>
+                            <th data-field="name" data-sortable="true" data-formatter="species_link_formatter" data-filter-control="input">Species</th>
+                            <th data-field="common_name" data-sortable="true" data-filter-control="input">Common name</th>
+                            <th data-field="taxon" data-sortable="true" data-formatter="taxon_link_formatter" data-filter-control="input">Taxon ID</th>
+                            <th data-field="genus" data-sortable="true" data-visible="false" data-filter-control="input">Genus</th>
+                            <th data-field="family" data-sortable="true" data-filter-control="input">Family</th>
+                            <th data-field="order" data-sortable="true" data-filter-control="input">Order</th>
+                            <th data-field="phylum" data-sortable="true" data-filter-control="select">Phylum</th>
+                            <th data-field="data_types.pacbio" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">PacBio</th>
+                            <th data-field="data_types.hic" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">Hi-C</th>
+                            <th data-field="data_types.10x" data-visible="false" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">10XG</th>
+                            <th data-field="data_types.htag" data-visible="false" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">Haplotagging</th>
+                            <th data-field="data_types.ont" data-visible="false" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">ONT</th>
+                            <th data-field="data_types.bionano" data-visible="false" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">BioNano</th>
+                            <th data-field="data_types.rna-seq" data-visible="false" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">RNA-Seq</th>
+                            <th data-field="data_types.iso-seq" data-visible="false" data-sortable="true" data-align="center" data-search-formatter="false" data-formatter="status_formatter" data-filter-control="select">Iso-Seq</th>
+                            <th data-field="asm.stage" data-sortable="true" data-search-formatter="false" data-formatter="asm_formatter" data-filter-control="select">Assembly status</th>
+                            <th data-field="asm.accession" data-sortable="true" data-visible="false" data-formatter="gca_formatter" data-search-formatter="false" data-filter-control="input">Assembly accession</th>
+                            <th data-field="specimens" data-sortable="true" data-visible="false" data-filter-control="input">Specimens</th>
                         </tr>
                     </thead>
                 </table>
@@ -320,7 +482,7 @@ sub generate_landing_page
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
                     at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
-                    Copyright &copy; 2020-2021 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    Copyright &copy; 2020-2022 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
                     <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
             </div>
         </div>
@@ -336,16 +498,28 @@ sub generate_landing_page
         }
 
         function status_formatter(value, row) {
-            if (value && value.reads)
+            if (value)
             {
-                return '<span class="dot"></span>';
-                // return '<svg height="100" width="100"><circle cx="50" cy="50" r="40" stroke="black" stroke-width="3" fill="red" /></svg>';
+                return '<span class="dot">'+value+'</span>';
+            }
+            return '<span class="empty">'+value+'</span>';
+        }
+
+        function asm_formatter(value, row) {
+            if (value)
+            {
+                return value;
+            }
+            return '-';
+        }
+
+        function gca_formatter(value, row) {
+            if (value)
+            {
+                return '<a href=https://www.ncbi.nlm.nih.gov/assembly/'+value+'>'+value+'</a>';
             }
             return '';
         }
-
-        var reports = $reports_json;
-        \$('#reports_table').bootstrapTable({data: reports});
 
         </script>
     </body>

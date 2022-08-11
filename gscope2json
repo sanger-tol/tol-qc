@@ -153,6 +153,8 @@ sub parse_gs
             my $label = $plot;
             $label =~ s/$base.//;
             $label =~ s/\.png$//;
+            my $pre = $relplot =~ /_gc/ ? 2 : $relplot =~ /smudge|ploidy/ ? 3 : 1;
+            $label = "${pre}_$label";
             if ($$opts{upload})
             {
                 system(qq[s3cmd put --acl-public --quiet $plot s3://tolqc/$$opts{group}/$relplot]) if ($$opts{group});

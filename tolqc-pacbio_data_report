@@ -7,7 +7,7 @@ use File::Temp qw/ tempfile tempdir /;
 use JSON;
 use File::Basename;
 
-my $pacbio_json = `for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name genomic_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*.stats; done | grep pacbio | pbstats2json -m -b $ENV{TOLQCROOT}/data/ -p`;
+my $pacbio_json = `for type in genomic transcriptomic; do for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name \${type}_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*.stats; done; done | grep pacbio | pbstats2json -m -b $ENV{TOLQCROOT}/data/ -p`;
 
 my $accessions = load_accessions();
 my $pacbio = decode_json($pacbio_json);
@@ -16,6 +16,7 @@ foreach my $rec (@$pacbio)
 {
     my $file = basename($$rec{input});
     $file =~ s/\.stats$//;
+    $file =~ s/\.rmdup//;
     if (exists $$accessions{$file})
     {
         $$rec{run_accession} = $$accessions{$file}->{run};
@@ -53,6 +54,7 @@ print $fh (qq[
         <script src="https://cdn.jsdelivr.net/npm/tableexport.jquery.plugin\@1.10.21/tableExport.min.js"></script>
         <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.js"></script>
         <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/export/bootstrap-table-export.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/filter-control/bootstrap-table-filter-control.min.js"></script>
 
         <script src="https://bootswatch.com/_assets/js/custom.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
@@ -64,6 +66,21 @@ print $fh (qq[
                 <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
                 </button>
+                <div class="collapse navbar-collapse" id="navbarResponsive">
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link" href="/">Species</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/pacbio/">PacBio</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/illumina/">Illumina</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/bionano/">BioNano</a>
+                        </li>
+                </div>
             </div>
         </div>
 
@@ -103,38 +120,43 @@ print $fh (qq[
                     data-detail-view-by-click="true"
                     data-toolbar=".pacbiotoolbar"
                     data-toolbar-align="right"
+                    data-filter-control="true"
                     data-detail-formatter="pacbio_image_formatter">
                     <thead>
                         <tr>
-                            <th data-field="group" data-sortable="true">group</th>
-                            <th data-field="specimen" data-sortable="true">specimen</th>
-                            <th data-field="platform" data-sortable="true" data-visible="false">platform</th>
-                            <th data-field="model" data-sortable="true" data-visible="false">model</th>
-                            <th data-field="sanger_id" data-sortable="true" data-visible="false">sample</th>
-                            <th data-field="date" data-sortable="true">date</th>
-                            <th data-field="instrument" data-sortable="true" data-visible="false">instrument</th>
-                            <th data-field="run" data-sortable="true">run</th>
-                            <th data-field="movie" data-sortable="true">movie</th>
-                            <th data-field="well_label" data-sortable="true">well</th>
-                            <th data-field="MovieLength" data-sortable="true" data-visible="false">movie length</th>
-                            <th data-field="ExtensionTime" data-sortable="true" data-visible="false">extension length</th>
+                            <th data-field="group" data-sortable="true" data-filter-control="input">group</th>
+                            <th data-field="specimen" data-sortable="true" data-filter-control="input">specimen</th>
+                            <th data-field="pipeline" data-sortable="true" data-filter-control="select">pipeline</th>
+                            <th data-field="platform" data-sortable="true" data-visible="false" data-filter-control="select">platform</th>
+                            <th data-field="model" data-sortable="true" data-visible="false" data-filter-control="select">model</th>
+                            <th data-field="sanger_id" data-sortable="true" data-visible="false" data-filter-control="input">sample</th>
+                            <th data-field="date" data-sortable="true" data-filter-control="input">date</th>
+                            <th data-field="instrument" data-sortable="true" data-visible="false" data-filter-control="input">instrument</th>
+                            <th data-field="run" data-sortable="true" data-filter-control="input">run</th>
+                            <th data-field="movie" data-sortable="true" data-filter-control="input">movie</th>
+                            <th data-field="well_label" data-sortable="true" data-filter-control="input">well</th>
+                            <th data-field="MovieLength" data-sortable="true" data-visible="false" data-filter-control="select">movie length</th>
+                            <th data-field="ExtensionTime" data-sortable="true" data-visible="false" data-filter-control="select">extension length</th>
                             <th data-field="InsertSize" data-sortable="true" data-visible="false">insert size</th>
-                            <th data-field="tag_index" data-sortable="true">tag</th>
-                            <th data-field="tag_sequence" data-sortable="true" data-visible="false">tag sequence</th>
-                            <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
-                            <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter">run accession</th>
-                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">exp accession</th>
-                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">study accession</th>
+                            <th data-field="tag_index" data-sortable="true" data-filter-control="select">tag</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false" data-filter-control="select">tag sequence</th>
+                            <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter" data-filter-control="input">sample accession</th>
+                            <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter" data-filter-control="input">run accession</th>
+                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">exp accession</th>
+                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">study accession</th>
                             <th data-field="submission_date" data-sortable="true" data-visible="false" data-filter-control="input">submission date</th>
-                            <th data-field="library_load_name" data-sortable="true" data-visible="false">library load name</th>
+                            <th data-field="library_load_name" data-sortable="true" data-visible="false" data-filter-control="input">library load name</th>
+                            <th data-field="n" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">reads</th>
                             <th data-field="sum" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
                             <th data-field="N50" data-align='right' data-sortable="true" data-formatter="local_formatter">N50</th>
+                            <th data-field="dups" data-align='right' data-sortable="true" data-visible="false" data-formatter="dec2_formatter">PCR dups (&#37;)</th>
+                            <th data-field="filtered" data-align='right' data-sortable="true" data-visible="false" data-formatter="dec2_formatter">filtered (&#37;)</th>
                             <th data-field="a" data-align='right' data-sortable="true" data-visible="false">A (&#37;)</th>
                             <th data-field="c" data-align='right' data-sortable="true" data-visible="false">C (&#37;)</th>
                             <th data-field="g" data-align='right' data-sortable="true" data-visible="false">G (&#37;)</th>
                             <th data-field="t" data-align='right' data-sortable="true" data-visible="false">T (&#37;)</th>
-                            <th data-field="species" data-sortable="true" data-formatter="species_link_formatter">species</th>
-                            <th data-field="species_lims" data-sortable="true" data-formatter="species_link_formatter" data-visible="false">species (lims)</th>
+                            <th data-field="species" data-sortable="true" data-formatter="species_link_formatter" data-filter-control="input">species</th>
+                            <th data-field="species_lims" data-sortable="true" data-formatter="species_link_formatter" data-visible="false" data-filter-control="input">species (lims)</th>
                             <th data-field="coi" data-align='right' data-sortable="true" data-sorter="similarity_sorter" data-formatter="bold_topmatch_formatter" data-cell-style="cellStyle">barcode</th>
                             <!-- <th data-field="coi" data-align='right' data-sortable="true" data-formatter="bold_modal_formatter">coi</th> -->
                             <!-- CCS report, LIMA report, chemistry, run-stats(P0,P1,P2), run date, instrument, movie-time, pre-ext, seqkit, bindingkit, reagentbox, cell-lot, loading-conc, pass/fail, totalGb, unique molecular yield, polymerase n50, ... -->
@@ -149,7 +171,7 @@ print $fh (qq[
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
                     at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
-                    Copyright &copy; 2020 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    Copyright &copy; 2020-2022 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
                     <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
             </div>
         </div>
@@ -229,10 +251,16 @@ print $fh (qq[
             }
             return value;
         }
+        function sortObject(obj) {
+            return Object.keys(obj).sort().reduce(function (result, key) {
+                result[key] = obj[key];
+                return result;
+            }, {});
+        }
         function illumina_image_formatter(index, row) {
             var illumina_plots = '';
             var x;
-            for (x in row) {
+            for (x in sortObject(row)) {
                 if (x.match(/^plot/)) {
                     var img = encodeURIComponent(row[x]);
                     illumina_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' samtools stats plots" data-toggle="lightbox" data-gallery="illumina'+index+'"><img src="'+img+'" height="75px"></a>';
@@ -279,7 +307,7 @@ print $fh (qq[
         function pacbio_image_formatter(index, row) {
             var pacbio_plots = '';
             var x;
-            for (x in row) {
+            for (x in sortObject(row)) {
                 if (x.match(/^plot/)) {
                     var img = row[x][0];
                     var label = row[x][1];

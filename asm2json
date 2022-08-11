@@ -196,15 +196,36 @@ sub parse_asmstats
         my $res = parse_busco($busco);
         push @{$$stats{busco}}, $res;
     }
-    my (@qvs) = glob(qq[$dir/$base.*.merqury/*.qv]);
-    foreach my $qv (qq[$dir/$base.10x.merqury/$specimen.10x.qv],qq[$dir/$base.ccs.merqury/$specimen.ccs.qv])
+    # my (@qvs) = (qq[$dir/$base.10x.merquryk/$specimen.10x.qv],qq[$dir/$base.ccs.merquryk/$specimen.ccs.qv],
+    #              qq[$dir/$base.10x.merqury/$specimen.10x.qv], qq[$dir/$base.ccs.merqury/$specimen.ccs.qv]);
+    # foreach my $qv (@qvs)
+    # {
+    #     next unless (-s $qv);
+    #     my $res = parse_merqury($qv);
+    #     if ($res)
+    #     {
+    #         $$stats{merqury} = $res;
+    #         last;
+    #     }
+    # }
+
+    my (@qvs) = (qq[$dir/$base.10x.merquryk/$specimen.10x.qv],qq[$dir/$base.ccs.merquryk/$specimen.ccs.qv],
+                 qq[$dir/$base.10x.merqury/$specimen.10x.qv], qq[$dir/$base.ccs.merqury/$specimen.ccs.qv]);
+    foreach my $qv (@qvs)
     {
         next unless (-s $qv);
         my $res = parse_merqury($qv);
-        if ($res)
+        if ($res && exists $$res{qv} && exists $$res{completeness})
         {
-            $$stats{merqury} = $res;
-            last;
+            if (exists $$stats{merqury})
+            {
+                $$stats{merqury} .= sprintf(qq[; Q%.1f-C%.1f(%s)], $$res{qv}, $$res{completeness}, $$res{type});
+            }
+            else
+            {
+                $$stats{merqury} = sprintf(qq[Q%.1f-C%.1f(%s)], $$res{qv}, $$res{completeness}, $$res{type});
+            }
+            last if ($$res{type} eq 'HiFi');
         }
     }
 
@@ -219,7 +240,7 @@ sub parse_asmstats
             next unless (-s $plot);
         }
         $plot =~ s/$$opts{base}//;
-        $$stats{"plot-${label}-kat-spectra"} = [ $plot, "KAT k-mer spectra plots for ".uc($label)." k-mers:" ];
+        $$stats{"plot-1_${label}-kat-spectra"} = [ $plot, "KAT k-mer spectra plots for ".uc($label)." k-mers:" ];
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -231,7 +252,7 @@ sub parse_asmstats
             next unless (-s $plot);
         }
         $plot =~ s/$$opts{base}//;
-        $$stats{"plot-${label}-kat-spectra-stacked"} = [ $plot, "KAT k-mer stacked spectra plots for ".uc($label)." k-mers:" ];
+        $$stats{"plot-1_${label}-kat-spectra-stacked"} = [ $plot, "KAT k-mer stacked spectra plots for ".uc($label)." k-mers:" ];
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -255,26 +276,26 @@ sub parse_asmstats
     {
         foreach my $plottype (qw(fl ln st))
         {
-            $plot = qq[$dir/$base.$label.merqury/$specimen.$label.$base.spectra-cn.$plottype.png];
-            next unless (-s $plot);
+            $plot = -s qq[$dir/$base.$label.merquryk/$specimen.$label.$base.spectra-cn.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimen.$label.$base.spectra-cn.$plottype.png] : qq[$dir/$base.$label.merqury/$specimen.$label.$base.spectra-cn.$plottype.png];
+            next unless ($plot && -s $plot);
             $plot =~ s/$$opts{base}//;
-            $$stats{"plot-${label}-merqury-primary-spectra-cn-$plottype"} = [ $plot, "Merqury: primary k-mer spectra-cn plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
+            $$stats{"plot-2_${label}-merqury-primary-spectra-cn-$plottype"} = [ $plot, "Merqury: primary k-mer spectra-cn plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
             if ($$opts{upload})
             {
                 system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
             }
-            $plot = qq[$dir/$base.$label.merqury/$specimen.$label.spectra-cn.$plottype.png];
-            next unless (-s $plot);
+            $plot = -s qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-cn.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-cn.$plottype.png] : qq[$dir/$base.$label.merqury/$specimen.$label.spectra-cn.$plottype.png];
+            next unless ($plot && -s $plot);
             $plot =~ s/$$opts{base}//;
-            $$stats{"plot-${label}-merqury-spectra-cn-$plottype"} = [ $plot, "Merqury: combined k-mer spectra-cn plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
+            $$stats{"plot-2_${label}-merqury-spectra-cn-$plottype"} = [ $plot, "Merqury: combined k-mer spectra-cn plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
             if ($$opts{upload})
             {
                 system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
             }
-            $plot = qq[$dir/$base.$label.merqury/$specimen.$label.spectra-asm.$plottype.png];
-            next unless (-s $plot);
+            $plot = -s qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-asm.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-asm.$plottype.png] : qq[$dir/$base.$label.merqury/$specimen.$label.spectra-asm.$plottype.png];
+            next unless ($plot && -s $plot);
             $plot =~ s/$$opts{base}//;
-            $$stats{"plot-${label}-merqury-spectra-asm-$plottype"} = [ $plot, "Merqury: combined k-mer spectra-asm plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
+            $$stats{"plot-2_${label}-merqury-spectra-asm-$plottype"} = [ $plot, "Merqury: combined k-mer spectra-asm plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
             if ($$opts{upload})
             {
                 system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -286,7 +307,7 @@ sub parse_asmstats
     if (-s $plot)
     {
         $plot =~ s/$$opts{base}//;
-        $$stats{"plot-purge-cutoffs"} = [ $plot, "Coverage cutoffs for purge_dups:" ];
+        $$stats{"plot-3_purge-cutoffs"} = [ $plot, "Coverage cutoffs for purge_dups:" ];
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -296,7 +317,7 @@ sub parse_asmstats
     if (-s $plot)
     {
         $plot =~ s/$$opts{base}//;
-        $$stats{"plot-purgek-circos"} = [ $plot, "PurgeK circos:" ];
+        $$stats{"plot-3_purgek-circos"} = [ $plot, "PurgeK circos:" ];
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -306,7 +327,7 @@ sub parse_asmstats
     if (-s $plot)
     {
         $plot =~ s/$$opts{base}//;
-        $$stats{"plot-asmgraph"} = [ $plot, "Bandage plot of hifiasm primary unitig graph:" ];
+        $$stats{"plot-3_asmgraph"} = [ $plot, "Bandage plot of hifiasm primary unitig graph:" ];
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -316,7 +337,37 @@ sub parse_asmstats
     if (-s $plot)
     {
         $plot =~ s/$$opts{base}//;
-        $$stats{"plot-pretext"} = [ $plot, "Pretext Hi-C map:" ];
+        $$stats{"plot-3_pretext"} = [ $plot, "Pretext Hi-C map:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    $plot = qq[$dir/yahs_scaffolds.png];
+    if (-s $plot)
+    {
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-3_juicebox"} = [ $plot, "Juicebox YaHS Hi-C map:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    $plot = qq[$dir/salsa_scaffolds.png];
+    if (-s $plot)
+    {
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-3_juicebox"} = [ $plot, "Juicebox SALSA Hi-C map:" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    $plot = qq[$dir/$specimen.png];
+    if (-s $plot)
+    {
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-3_hifiasm-histo"} = [ $plot, "Hifiasm purge cutoffs:" ];
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
@@ -392,13 +443,21 @@ sub parse_merqury
 {
     my ($qv) = @_;
     my ($type) = $qv =~ m/([^\.]+)\.qv$/;
+    $type = '10X' if ($type eq '10x');
+    $type = 'HiFi' if ($type eq 'ccs');
     my $res = { type => $type };
+    my $idx = 3;
     open(my $fh, "<$qv") || die("Could not open file [$qv]");
     while (<$fh>)
     {
+        if (/^Assembly/)
+        {
+            $idx = 4;
+            next;
+        }
         chomp;
         my @F = split /\t/;
-        $$res{qv} = $F[3]+0 if ($F[3] =~ m/[\d\.]+/);
+        $$res{qv} = $F[$idx]+0 if ($F[$idx] =~ m/[\d\.]+/);
         last;
     }
     close($fh);
@@ -412,9 +471,7 @@ sub parse_merqury
         {
             chomp;
             my @F = split /\t/;
-            next unless ($F[0] eq 'both');
             $$res{completeness} = $F[4]+0 if ($F[4] =~ m/[\d\.]+/);
-            last;
         }
         close($fh1);
     }

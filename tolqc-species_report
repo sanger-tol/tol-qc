@@ -173,6 +173,10 @@ sub get_sts_record
         next unless ($line[$index] eq $species || exists $spp{"$line[$index2]"});
         my %hash;
         @hash{@keys} = @line;
+        if (!$hash{biospecimen_id} && $hash{sample_same_as})
+        {
+            $hash{biospecimen_id} = $hash{sample_same_as};
+        }
         push @sts, \%hash;
     }
     close($fh);
@@ -248,6 +252,39 @@ sub get_cobionts
     my $marker_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -name marker | marker2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $readviz_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -name readviz | readviz2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
     my $contigviz_json = -d 'genomic_data' ? `find -L genomic_data -maxdepth 4 -name contigviz | contigviz2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $btk = $$data{tolid_prefix} ? `grep $$data{tolid_prefix} $ENV{TOLQCROOT}/track/tol_btk.fofn` : '';
+    if ($btk)
+    {
+        $btk = qq[
+              <div class="card">
+                <div class="card-header" id="headingSix">
+                  <h5 class="mb-0">
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseSix" aria-expanded="false" aria-controls="collapseSix">
+                      BlobToolKit
+                    </button>
+                  </h5>
+                </div>
+                <div id="collapseSix" class="collapse" aria-labelledby="headingSix">
+                  <div id="btk" class="card-body">
+                    <p>BTK datasets:</p>
+                    <div class="list-group">
+        ];
+        open my $fh, "grep $$data{tolid_prefix} $ENV{TOLQCROOT}/track/tol_btk.fofn |";
+        while(<$fh>)
+        {
+            chomp;
+            my ($dataset) = m/dataset\/(\S+)\/blob/;
+            $btk .= qq[<a href="$_" class="list-group-item list-group-item-action">$dataset</a>\n];
+
+        }
+        close($fh);
+        $btk .= qq[
+                    </div>
+                  </div>
+                </div>
+              </div>
+        ];
+    }
 
     my $cobionts_html = qq[
             <h2><a name="cobionts">Cobionts</a></h2>
@@ -435,7 +472,7 @@ sub get_cobionts
                   </div>
                 </div>
               </div>
-
+$btk
             </div>
 
             <hr/>
@@ -456,20 +493,29 @@ sub generate_html
         $species_img = qq[<img src="$$data{_name}.png" />];
         system(qq[s3cmd --acl-public --quiet put $$data{_name}.png s3://tolqc/$$data{group}/$$data{_name}/$$data{_name}.png]);
     }
-    my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
+
     my $gscope_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_summary.txt | grep -v busco | grep -v bionano | gscope2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
-    my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : 'null';
-    my ($mashscreen_json, $marker_json, $readviz_json, $contigviz_json, $cobionts_html) = get_cobionts($data);
+
+    my $pacbio_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : '';
+    my $isoseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*.stats | grep pacbio | pbstats2json -p -u` : '';
+    $pacbio_json = $pacbio_json.$isoseq_json;
+    $pacbio_json =~ s/\]\[/,/;
+    $pacbio_json =~ s/^\[,/[/;
+    $pacbio_json =~ s/,\]$/]/;
+    $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
+    $pacbio_json  = 'null' unless ($pacbio_json);
+
+    my $illumina_json = -d 'genomic_data' ? `find -L genomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     my $rnaseq_json = -d 'transcriptomic_data' ? `find -L transcriptomic_data -type f -name \*_F0xB00.stats | bamstats2json -p -u -g "$$data{group}/$$data{_name}"` : '';
     $illumina_json = $illumina_json.$rnaseq_json;
     $illumina_json =~ s/\]\[/,/;
     $illumina_json =~ s/^\[,/[/;
+    $illumina_json =~ s/,\]$/]/;
     $illumina_json = load_illumina_accessions($illumina_json) if ($illumina_json);
     $illumina_json  = 'null' unless ($illumina_json);
-    $pacbio_json = load_pacbio_accessions($pacbio_json) if ($pacbio_json);
 
     my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats -o -name out_scaffolds_final.fa.stats -o -name scaffolds_FINAL.fasta.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
-    my $mito_json = -d 'working' ? `find working -mindepth 3 -maxdepth 3 -type f -name final_mitogenome.fasta | mitohifi2json -p` : 'null';
+    my $organelles_json = -d 'working' ? `find working -mindepth 3 -maxdepth 3 -type f -name final_mitogenome.fasta | mitohifi2json -p` : 'null';
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
@@ -484,10 +530,23 @@ sub generate_html
     my $goat_gs = $size ? [ $size, $$goat{records}->[0]{record}{attributes}{genome_size}{aggregation_source} ] : ['unknown','unknown'];
     my $goat_asm = $asm_size ? [ $asm_size, $$goat{records}->[0]{record}{attributes}{assembly_span}{aggregation_source} ] : ['unknown','unknown'];
     my $goat_chr = $chr_num ? [ $chr_num, $$goat{records}->[0]{record}{attributes}{chromosome_number}{aggregation_source} ] : ['unknown','unknown'];
+    my $tolid_prefix =  '';
+    if (exists $$goat{records}->[0]{record}{taxon_names})
+    {
+        foreach my $rec (@{$$goat{records}->[0]{record}{taxon_names}})
+        {
+            next unless ($$rec{class} eq 'tolid_prefix');
+            $tolid_prefix = $$rec{name};
+            last;
+        }
+    }
+    $$data{tolid_prefix} = $tolid_prefix;
 
     my $specimens = -d 'genomic_data' ? `find genomic_data -maxdepth 1 -mindepth 1 -type d | cut -f2 -d"/" | sort -V | xargs echo | sed 's/ /,/g'` : '';
     $$data{specimens} = $specimens;
     my $sts_json = encode_json($$data{sts});
+
+    my ($mashscreen_json, $marker_json, $readviz_json, $contigviz_json, $cobionts_html) = get_cobionts($data);
 
     my $genomic_data = '';
     if (-s "genomic_data/$$data{_name}.mash.png")
@@ -574,6 +633,9 @@ sub generate_html
                         <li class="nav-item">
                             <a class="nav-link" href="#asm">Assemblies</a>
                         </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#organelles">Organelles</a>
+                        </li>
                 </div>
             </div>
         </div>
@@ -625,6 +687,10 @@ sub generate_html
                         <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> chr no.:</th>
                         <td>$$goat_chr[0] ($$goat_chr[1])</td>
                     </tr>
+                    <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://id.tol.sanger.ac.uk/">ToLID</a> prefix:</th>
+                        <td>$$data{tolid_prefix}</td>
+                    </tr>
               </tbody>
             </table>
 
@@ -633,7 +699,7 @@ sub generate_html
             <h2 id="specimens"><a name="specimens">Specimens</a></h2>
             <p>Below is information about specimens collected for this species retrieved from the Golden Record manifest.</p>
             <div class="section" id="sts">
-                <table id="sts_table" style="width: auto"
+                <table id="sts_table"
                     data-show-columns="true"
                     data-show-columns-toggle-all="true"
                     data-buttons-align="left"
@@ -676,13 +742,23 @@ sub generate_html
             <h2><a name="spectra">Spectra estimates</a></h2>
             <p>Below are estimates of genome size, repeat size, heterozygosity based on <i>k</i>-mer specta analysis with <a href="https://github.com/schatzlab/genomescope">GenomeScope</a>.</p>
             <div class="section" id="spectra">
-                <table id="gscope_table" style="width: auto"
+                <div class="gscopetoolbar">
+                    <button id="gscopebutton" class="btn btn-secondary">show all plots</button>
+                    <button id="gscopebutton2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="gscope_table"
                     data-search="true"
                     data-search-align="left"
+                    data-toggle="table"
+                    data-show-toggle="true"
+                    data-show-columns="true"
+                    data-buttons-align="left"
                     data-sort-order="asc"
                     data-detail-view="true"
                     data-detail-view-icon="false"
                     data-detail-view-by-click="true"
+                    data-toolbar=".gscopetoolbar"
+                    data-toolbar-align="right"
                     data-detail-formatter="gscope_detail_formatter">
                     <thead>
                         <tr>
@@ -690,13 +766,13 @@ sub generate_html
                             <th data-field="specimen" data-sortable="true">specimen</th>
                             <th data-field="k" data-align='right' data-sortable="true"><i>k</i>-mer</th>
                             <th data-field="kcov" data-align='right' data-sortable="true"><i>k</i>-cov</th>
-                            <th data-field="max.len" data-align='right' data-sortable="true" data-formatter="local_formatter">haploid</th>
+                            <th data-field="max.len" data-align='right' data-sortable="true" data-formatter="local_formatter">haploid size</th>
                             <th data-field="max.rep" data-align='right' data-sortable="true" data-formatter="gs_rep_formatter">repeat (&#37;)</th>
                             <!-- <th data-field="uniq" data-align='right' data-sortable="true" data-formatter="local_formatter">unique</th> -->
-                            <th data-field="max.het" data-align='right' data-sortable="true" data-formatter="dec2_formatter">het (&#37;)</th>
-                            <th data-field="max.fit" data-align='right' data-sortable="true" data-formatter="dec2_formatter">fit (&#37;)</th>
-                            <th data-field="max.err" data-align='right' data-sortable="true" data-formatter="dec2_formatter">error (&#37;)</th>
-                            <th data-field="plot" data-align='right' data-sortable="false" data-formatter="gs_image_formatter">plot</th>
+                            <th data-field="max.het" data-align='right' data-sortable="true" data-formatter="dec2_formatter">heterozygosity (&#37;)</th>
+                            <th data-field="max.fit" data-align='right' data-sortable="true" data-formatter="dec2_formatter">model fit (&#37;)</th>
+                            <th data-field="max.err" data-align='right' data-sortable="true" data-formatter="dec2_formatter">model error (&#37;)</th>
+                            <th data-field="plot" data-align='right' data-sortable="false" data-formatter="gs_image_formatter">histogram</th>
                         </tr>
                     </thead>
                 </table>
@@ -738,6 +814,7 @@ sub generate_html
                     data-detail-formatter="asm_image_formatter">
                     <thead>
                         <tr>
+                            <th data-field="pipeline" data-sortable="true">pipeline</th>
                             <th data-field="specimen" data-sortable="true">specimen</th>
                             <th data-field="sanger_id" data-sortable="true" data-visible="false">sample</th>
                             <th data-field="date" data-sortable="true">date</th>
@@ -752,6 +829,8 @@ sub generate_html
                             <th data-field="n" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">reads</th>
                             <th data-field="sum" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
                             <th data-field="N50" data-align='right' data-sortable="true" data-formatter="local_formatter">N50</th>
+                            <th data-field="dups" data-align='right' data-sortable="true" data-visible="false" data-formatter="dec2_formatter">PCR dups (&#37;)</th>
+                            <th data-field="filtered" data-align='right' data-sortable="true" data-visible="false" data-formatter="dec2_formatter">filtered (&#37;)</th>
                             <th data-field="a" data-align='right' data-sortable="true" data-visible="false">A (&#37;)</th>
                             <th data-field="c" data-align='right' data-sortable="true" data-visible="false">C (&#37;)</th>
                             <th data-field="g" data-align='right' data-sortable="true" data-visible="false">G (&#37;)</th>
@@ -892,7 +971,8 @@ sub generate_html
                             <th data-field="scaffold_n" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffolds</th>
                             <th data-field="length" data-sortable="true" data-formatter="length_formatter" data-align="right">length</th>
                             <th data-field="busco" data-sortable="true" data-formatter="busco_formatter">BUSCO</th>
-                            <th data-field="merqury" data-sortable="true" data-formatter="merqury_formatter" data-align="right">merqury</th>
+                            <th data-field="busco" data-sortable="true" data-formatter="busco_lineage_formatter" data-visible="false">BUSCO lineage</th>
+                            <th data-field="merqury" data-sortable="true" data-align="right">merqury</th>
                         </tr>
                     </thead>
                 </table>
@@ -900,14 +980,14 @@ sub generate_html
 
             <hr/>
 
-            <h2><a name="mito">Organelles</a></h2>
-            <p>In-progress organelle results from MitoHiFi2.</p>
-            <div class="section" id="mito">
-                <div class="mitotoolbar">
-                    <button id="mitobutton" class="btn btn-secondary">show details</button>
-                    <button id="mitobutton2" class="btn btn-secondary">hide details</button>
+            <h2><a name="organelles">Organelles</a></h2>
+            <p>In-progress organelle results from <a href="https://github.com/marcelauliano/MitoHiFi">MitoHiFi2</a>.</p>
+            <div class="section" id="organelles">
+                <div class="organelletoolbar">
+                    <button id="organellebutton" class="btn btn-secondary">show details</button>
+                    <button id="organellebutton2" class="btn btn-secondary">hide details</button>
                 </div>
-                <table id="mito_table"
+                <table id="organelles_table"
                         data-toggle="table"
                         data-show-toggle="true"
                         data-show-columns="true"
@@ -919,9 +999,9 @@ sub generate_html
                         data-detail-view="true"
                         data-detail-view-icon="false"
                         data-detail-view-by-click="true"
-                        data-toolbar=".mitotoolbar"
+                        data-toolbar=".organelletoolbar"
                         data-toolbar-align="right"
-                        data-detail-formatter="mitodetail_formatter">
+                        data-detail-formatter="organelle_detail_formatter">
                     <thead>
                         <tr>
                             <th data-field="specimen" data-sortable="true">specimen</th>
@@ -930,7 +1010,8 @@ sub generate_html
                             <th data-field="mitogenome_length" data-sortable="true" data-formatter="local_formatter" data-align="right">length</th>
                             <th data-field="mitogenome_gene_count" data-sortable="true" data-formatter="local_formatter" data-align="right">genes</th>
                             <th data-field="frameshifts_found" data-sortable="true">frameshifts</th>
-                            <th data-field="reference_accession" data-sortable="true" data-formatter="mitoref_formatter" data-align="right">reference</th>
+                            <th data-field="is_circular" data-sortable="true">is circular</th>
+                            <th data-field="reference_accession" data-sortable="true" data-formatter="organelle_ref_formatter" data-align="right">reference</th>
                         </tr>
                     </thead>
                 </table>
@@ -942,7 +1023,7 @@ sub generate_html
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
                     at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
-                    Copyright &copy; 2020-2021 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    Copyright &copy; 2020-2022 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
                     <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
             </div>
         </div>
@@ -1026,8 +1107,8 @@ sub generate_html
             if (row["plot-plot"]) {
                 return '<a href="'+row["plot-plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-plot.log"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-plot.log"][0]+'" class="imggallery" width="75px"></a>';
             }
-            else if (row["plot-transformed_linear_plot"]) {
-                return '<a href="'+row["plot-transformed_linear_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 linear plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-transformed_linear_plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-transformed_log_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-transformed_log_plot"][0]+'" class="imggallery" width="75px"></a>';
+            else if (row["plot-1_transformed_linear_plot"]) {
+                return '<a href="'+row["plot-1_transformed_linear_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 linear plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-1_transformed_linear_plot"][0]+'" class="imggallery" width="75px"></a><a href="'+row["plot-1_transformed_log_plot"][0]+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' GenomeScope 2.0 log plot" data-toggle="lightbox" data-gallery="spectra"><img src="'+row["plot-1_transformed_log_plot"][0]+'" class="imggallery" width="75px"></a>';
             }
             else {
                 return "";
@@ -1036,7 +1117,7 @@ sub generate_html
         function gscope_detail_formatter(index, row) {
             var gscope_plots = '';
             var x;
-            for (x in row) {
+            for (x in sortObject(row)) {
                 if (x.match(/^plot/)) {
                     var img = row[x][0];
                     var label = row[x][1];
@@ -1048,7 +1129,7 @@ sub generate_html
         function illumina_image_formatter(index, row) {
             var illumina_plots = '';
             var x;
-            for (x in row) {
+            for (x in sortObject(row)) {
                 if (x.match(/^plot/)) {
                     var img = encodeURIComponent(row[x]);
                     illumina_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' samtools stats plots" data-toggle="lightbox" data-gallery="illumina'+index+'"><img src="'+img+'" height="75px"></a>';
@@ -1078,6 +1159,12 @@ sub generate_html
         function busco_formatter(value,row) {
             if (row.busco) {
                 return row.busco[0].busco;
+            }
+            return ""
+        }
+        function busco_lineage_formatter(value,row) {
+            if (row.busco) {
+                return row.busco[0].lineage;
             }
             return ""
         }
@@ -1116,20 +1203,20 @@ sub generate_html
             }
             return ""
         }
-        function mitoref_formatter(value, row) {
+        function organelle_ref_formatter(value, row) {
             if (value) {
-                return '<a href="https://www.ebi.ac.uk/ena/browser/api/embl/'+value+'">'+row.reference_organism+'</a>; '+local_formatter(row.reference_length)+' bp; '+row.reference_gene_count+' genes';
+                return '<a href="https://www.ncbi.nlm.nih.gov/nuccore/'+value+'">'+value+'</a>; '+local_formatter(row.reference_length)+' bp; '+row.reference_gene_count+' genes';
             }
             return ""
         }
-        function mitodetail_formatter(index, row) {
-            var mitodetail = '<pre>'+row.txt+'</pre>';
-            return mitodetail
+        function organelle_detail_formatter(index, row) {
+            var organelledetail = '<pre>'+row.txt+'</pre>';
+            return organelledetail
         }
         function gscope_detail_formatter(index, row) {
             var gscope_plots = '';
             var x;
-            for (x in row) {
+            for (x in sortObject(row)) {
                 if (x.match(/^plot/)) {
                     var img = row[x][0];
                     var label = row[x][1];
@@ -1239,9 +1326,9 @@ sub generate_html
             \$('#marker_species_table').bootstrapTable({data: marker.species});
             \$('#marker_families_table').bootstrapTable({data: marker.families});
         }
-        if ($mito_json) {
-            var mito = $mito_json;
-            \$('#mito_table').bootstrapTable({data: mito});
+        if ($organelles_json) {
+            var organelles = $organelles_json;
+            \$('#organelles_table').bootstrapTable({data: organelles});
         }
         function markerStyle(row, index) {
             if (row.Classification)
@@ -1300,10 +1387,17 @@ sub generate_html
             \$('#asm_table').bootstrapTable({data: asm});
         }
 
+        function sortObject(obj) {
+            return Object.keys(obj).sort().reduce(function (result, key) {
+                result[key] = obj[key];
+                return result;
+            }, {});
+        }
+
         function asm_image_formatter(index, row) {
             var asm_plots = '';
             var x;
-            for (x in row) {
+            for (x in sortObject(row)) {
                 if (x.match(/^plot/)) {
                     var img = row[x][0];
                     var label = row[x][1];
@@ -1312,6 +1406,18 @@ sub generate_html
             }
             return asm_plots;
         }
+
+        var \$gscopebutton = \$('#gscopebutton')
+        var \$gscopebutton2 = \$('#gscopebutton2')
+
+        \$(function() {
+            \$gscopebutton.click(function () {
+                \$('#gscope_table').bootstrapTable('expandAllRows')
+            })
+            \$gscopebutton2.click(function () {
+                \$('#gscope_table').bootstrapTable('collapseAllRows')
+            })
+        })
 
         var \$pacbiobutton = \$('#pacbiobutton')
         var \$pacbiobutton2 = \$('#pacbiobutton2')
@@ -1337,15 +1443,15 @@ sub generate_html
             })
         })
 
-        var \$mitobutton = \$('#mitobutton')
-        var \$mitobutton2 = \$('#mitobutton2')
+        var \$organellebutton = \$('#organellebutton')
+        var \$organellebutton2 = \$('#organellebutton2')
 
         \$(function() {
-            \$mitobutton.click(function () {
-                \$('#mito_table').bootstrapTable('expandAllRows')
+            \$organellebutton.click(function () {
+                \$('#organelles_table').bootstrapTable('expandAllRows')
             })
-            \$mitobutton2.click(function () {
-                \$('#mito_table').bootstrapTable('collapseAllRows')
+            \$organellebutton2.click(function () {
+                \$('#organelles_table').bootstrapTable('collapseAllRows')
             })
         })
 
@@ -1415,6 +1521,7 @@ sub load_pacbio_accessions
     {
         my $file = basename($$rec{input});
         $file =~ s/\.stats$//;
+        $file =~ s/\.rmdup//;
         if (exists $$accessions{$file})
         {
             $$rec{run_accession} = $$accessions{$file}->{run};

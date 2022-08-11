@@ -36,14 +36,16 @@ if ($$opts{stdin})
     while (<>)
     {
         chomp;
-        push @$output, parse_mitohifi($opts, $_);
+        my $res = parse_mitohifi($opts, $_);
+        push @$output, $res if $res;
     }
 }
 else
 {
     foreach my $file (@{$$opts{inputs}})
     {
-        push @$output, parse_mitohifi($opts, $file);
+        my $res = parse_mitohifi($opts, $file);
+        push @$output, $res if $res;
     }
 }
 print encode_json($output);
@@ -87,7 +89,7 @@ sub parse_mitohifi
     my ($species_u,$specimen,$asm,$y,$m,$d,$stage) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})/([^\/]+)};
     return '' unless ($species_u && $specimen && $asm && $y && $m && $d);
     return '' unless (-s "$dir/contigs_stats.tsv");
-    $asm = 'reads' if (basename($dir) eq 'mito.reds');
+    $asm = 'reads' if (basename($dir) eq 'mito.reads');
     my $species = $species_u;
     $species =~ s/_/ /g;
     my $hash = {
@@ -103,6 +105,7 @@ sub parse_mitohifi
     };
 
     my ($reflen, $refgene, $fs, $len, $gene, $txt);
+    my $is_circular = '';
     open(my $fh, "<$dir/contigs_stats.tsv") || die("Could not open $dir/contigs_stats.tsv");
     while (<$fh>)
     {
@@ -115,7 +118,12 @@ sub parse_mitohifi
         }
         if (/^final_mitogenome/)
         {
-            (undef,$fs,undef,$len,$gene) = split /\t/;
+            my @line = split /\t/;
+            (undef,$fs,undef,$len,$gene) = @line;
+            if (scalar @line>5)
+            {
+                $is_circular = $line[5] eq 'True' ? 'True' : 'False';
+            }
             $fs =~ s/No frameshift found/None/;
             next;
         }
@@ -134,7 +142,7 @@ sub parse_mitohifi
         $reforg = `curl -sL https://www.ebi.ac.uk/ena/browser/api/embl/$refacc | grep "/organism" | cut -f2 -d'"'`;
         chomp $reforg;
     }
-    return '' unless ($refacc && $reforg);
+    $reforg = '' unless ($reforg);
 
     $$hash{reference_accession} = $refacc;
     $$hash{reference_length} = $reflen+0;
@@ -143,6 +151,7 @@ sub parse_mitohifi
     $$hash{frameshifts_found} = $fs;
     $$hash{mitogenome_length} = $len+0;
     $$hash{mitogenome_gene_count} = $gene+0;
+    $$hash{is_circular} = $is_circular;
     $$hash{txt} = $txt;
 
     return $hash;

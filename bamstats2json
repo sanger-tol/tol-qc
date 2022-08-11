@@ -270,7 +270,7 @@ sub parse_bamstats
         next unless (-s $plot);
         my $plot_path = $plot;
         $plot_path =~ s/$$opts{base}//;
-        $$hash{"plot-$label"} = $plot_path;
+        $$hash{"plot-1_$label"} = $plot_path;
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot_path && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot_path]);
@@ -282,7 +282,7 @@ sub parse_bamstats
         next unless (-s $plot);
         my $plot_path = $plot;
         $plot_path =~ s/$$opts{base}//;
-        $$hash{"plot-$label"} = $plot_path;
+        $$hash{"plot-2_$label"} = $plot_path;
         if ($$opts{upload})
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot_path && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot_path]);
