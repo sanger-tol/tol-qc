@@ -209,8 +209,13 @@ sub parse_asmstats
     #     }
     # }
 
-    my (@qvs) = (qq[$dir/$base.10x.merquryk/$specimen.10x.qv],qq[$dir/$base.ccs.merquryk/$specimen.ccs.qv],
-                 qq[$dir/$base.10x.merqury/$specimen.10x.qv], qq[$dir/$base.ccs.merqury/$specimen.ccs.qv]);
+    my (@qvs) = (glob(qq[$dir/$base.10x.merquryk/*.10x.qv]),glob(qq[$dir/$base.ccs.merquryk/*.ccs.qv]),
+                 glob(qq[$dir/$base.10x.merqury/*.10x.qv]), glob(qq[$dir/$base.ccs.merqury/*.ccs.qv]));
+    my ($specimenk) = '';
+    if (@qvs)
+    {
+        ($specimenk) = $qvs[0] =~ m/\/([^\/]+).(10x|ccs).qv/;
+    }
     foreach my $qv (@qvs)
     {
         next unless (-s $qv);
@@ -233,10 +238,10 @@ sub parse_asmstats
     # kmc based plots - to remove? or only include if merqury plots not available?
     foreach my $label (qw(10x ccs))
     {
-        $plot = qq[$dir/$base.$label.kat/$specimen.spectra.png];
+        $plot = qq[$dir/$base.$label.kat/$specimenk.spectra.png];
         unless (-s $plot)
         {
-            $plot = qq[$dir/$base.$label.kat/$specimen.png];
+            $plot = qq[$dir/$base.$label.kat/$specimenk.png];
             next unless (-s $plot);
         }
         $plot =~ s/$$opts{base}//;
@@ -245,10 +250,10 @@ sub parse_asmstats
         {
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
         }
-        $plot = qq[$dir/$base.$label.kat/$specimen.stacked.spectra.png];
+        $plot = qq[$dir/$base.$label.kat/$specimenk.stacked.spectra.png];
         unless (-s $plot)
         {
-            $plot = qq[$dir/$base.$label.kat/$specimen.stacked.png];
+            $plot = qq[$dir/$base.$label.kat/$specimenk.stacked.png];
             next unless (-s $plot);
         }
         $plot =~ s/$$opts{base}//;
@@ -276,7 +281,7 @@ sub parse_asmstats
     {
         foreach my $plottype (qw(fl ln st))
         {
-            $plot = -s qq[$dir/$base.$label.merquryk/$specimen.$label.$base.spectra-cn.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimen.$label.$base.spectra-cn.$plottype.png] : qq[$dir/$base.$label.merqury/$specimen.$label.$base.spectra-cn.$plottype.png];
+            $plot = -s qq[$dir/$base.$label.merquryk/$specimenk.$label.$base.spectra-cn.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimenk.$label.$base.spectra-cn.$plottype.png] : qq[$dir/$base.$label.merqury/$specimenk.$label.$base.spectra-cn.$plottype.png];
             next unless ($plot && -s $plot);
             $plot =~ s/$$opts{base}//;
             $$stats{"plot-2_${label}-merqury-primary-spectra-cn-$plottype"} = [ $plot, "Merqury: primary k-mer spectra-cn plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
@@ -284,7 +289,7 @@ sub parse_asmstats
             {
                 system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
             }
-            $plot = -s qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-cn.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-cn.$plottype.png] : qq[$dir/$base.$label.merqury/$specimen.$label.spectra-cn.$plottype.png];
+            $plot = -s qq[$dir/$base.$label.merquryk/$specimenk.$label.spectra-cn.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimenk.$label.spectra-cn.$plottype.png] : qq[$dir/$base.$label.merqury/$specimenk.$label.spectra-cn.$plottype.png];
             next unless ($plot && -s $plot);
             $plot =~ s/$$opts{base}//;
             $$stats{"plot-2_${label}-merqury-spectra-cn-$plottype"} = [ $plot, "Merqury: combined k-mer spectra-cn plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
@@ -292,7 +297,7 @@ sub parse_asmstats
             {
                 system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
             }
-            $plot = -s qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-asm.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimen.$label.spectra-asm.$plottype.png] : qq[$dir/$base.$label.merqury/$specimen.$label.spectra-asm.$plottype.png];
+            $plot = -s qq[$dir/$base.$label.merquryk/$specimenk.$label.spectra-asm.$plottype.png] ? qq[$dir/$base.$label.merquryk/$specimenk.$label.spectra-asm.$plottype.png] : qq[$dir/$base.$label.merqury/$specimenk.$label.spectra-asm.$plottype.png];
             next unless ($plot && -s $plot);
             $plot =~ s/$$opts{base}//;
             $$stats{"plot-2_${label}-merqury-spectra-asm-$plottype"} = [ $plot, "Merqury: combined k-mer spectra-asm plot ($plottype2name{$plottype}) for ".uc($label)." k-mers:" ];
@@ -313,7 +318,7 @@ sub parse_asmstats
             system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
         }
     }
-    $plot = qq[$dir/purged_purgeK/circos_out/circos.png];
+    $plot = qq[$dir/purged_purgek/circos_out/circos.png];
     if (-s $plot)
     {
         $plot =~ s/$$opts{base}//;
@@ -360,7 +365,7 @@ sub parse_asmstats
         $$stats{"plot-3_juicebox"} = [ $plot, "Juicebox SALSA Hi-C map:" ];
         if ($$opts{upload})
         {
-            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+            system(qq[s3cmd put --acl-public --quiet $plot s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
         }
     }
     $plot = qq[$dir/$specimen.png];
@@ -370,7 +375,17 @@ sub parse_asmstats
         $$stats{"plot-3_hifiasm-histo"} = [ $plot, "Hifiasm purge cutoffs:" ];
         if ($$opts{upload})
         {
-            system(qq[s3cmd put --quiet $plot s3://tolqc/$$opts{group}/$plot && s3cmd setacl --quiet --acl-public s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+            system(qq[s3cmd put --acl-public --quiet $plot s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    $plot = glob(qq[$dir/${base}.*.busco/circos.png]);
+    if ($plot && -s $plot)
+    {
+        $plot =~ s/$$opts{base}//;
+        $$stats{"plot-3_busco-circos"} = [ $plot, "BUSCO circos" ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --acl-public --quiet $plot s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
         }
     }
 
