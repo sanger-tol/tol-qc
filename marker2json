@@ -116,12 +116,13 @@ sub parse_marker
         $$hash{SpeciesPresent} = $$json{SpeciesPresent};
         $$hash{Families} = $$json{Families};
     }
-    elsif (-s "$abs_dir/$specimen.ProkSSU.reduced.SILVA.tax")
+    elsif (-s "$abs_dir/$specimen.ProkSSU.reduced.SILVA.tax" || -s "$abs_dir/$specimen.SSU.reduced.SILVA.tax")
     {
+        my $ssu = -s "$abs_dir/$specimen.SSU.reduced.SILVA.tax" ? "SSU" : "ProkSSU";
         my $res = {};
         my $tax = '';
         # parse classification file
-        open(my $fh, "<$abs_dir/$specimen.ProkSSU.reduced.SILVA.tax");
+        open(my $fh, "<$abs_dir/$specimen.$ssu.reduced.SILVA.tax");
         while(<$fh>)
         {
             chomp;
@@ -135,12 +136,12 @@ sub parse_marker
             $$res{$ctg}{Cluster} = [];
         }
         close($fh);
-        if (-s "$abs_dir/$specimen.ProkSSU.reduced.fa.clstr")
+        if (-s "$abs_dir/$specimen.$ssu.reduced.fa.clstr")
         {
             my $id = '';
             my $size = 0;
             my $cluster = {};
-            open(my $fh2, "<$abs_dir/$specimen.ProkSSU.reduced.fa.clstr");
+            open(my $fh2, "<$abs_dir/$specimen.$ssu.reduced.fa.clstr");
             while(<$fh2>)
             {
                 chomp;
