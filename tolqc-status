@@ -72,12 +72,13 @@ sub error
 
 sub parse_params
 {
-    my $opts = { input => '-', kmer => 31, jira => 0, project => '*', group => '*' };
+    my $opts = { input => '-', kmer => 31, jira => 0, project => '*', group => '*', label => '' };
     while (defined(my $arg=shift(@ARGV)))
     {
         if ( $arg eq '-t' || $arg eq '--tech' ) { $$opts{tech} = shift(@ARGV); next; }
         if ( $arg eq '-c' || $arg eq '--comment' ) { $$opts{comment} = shift(@ARGV); next; }
         if ( $arg eq '-k' || $arg eq '--kmer' ) { $$opts{kmer} = shift(@ARGV); next; }
+        if ( $arg eq '-l' || $arg eq '--label' ) { $$opts{label} = shift(@ARGV); next; }
         if ( $arg eq '-p' || $arg eq '--project' ) { $$opts{project} = shift(@ARGV); next; }
         if ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
         if ( $arg eq '-j' || $arg eq '--jira' ) { $$opts{jira} = 1; next; }
@@ -93,6 +94,7 @@ sub status
 {
     my ($opts,$specimen) = @_;
     my $techs = $$opts{tech};
+    my $label = $$opts{label};
     foreach my $tech (split /,/, $$opts{tech})
     {
         if ($tech eq 'asm')
@@ -120,10 +122,15 @@ sub status
                     return;
                 }
             }
-            if (-s "$asmdir/scaffolding/yahs/out.break.yahs/out_scaffolds_final.fa.stats")
+            if (-s "$asmdir/scaffolding$label/yahs/out.break.yahs/out_scaffolds_final.fa.stats")
             {
                 # print STDERR qq[Detected YaHs scaffolds\n];
-                $asm = "$asmdir/scaffolding/yahs/out.break.yahs/out_scaffolds_final.fa";
+                $asm = "$asmdir/scaffolding$label/yahs/out.break.yahs/out_scaffolds_final.fa";
+            }
+            elsif (-s "$asmdir/scaffolding$label/yahs/out.break.yahs/out_scaffolds_final.fa.gz.stats")
+            {
+                # print STDERR qq[Detected YaHs scaffolds\n];
+                $asm = "$asmdir/scaffolding$label/yahs/out.break.yahs/out_scaffolds_final.fa.gz";
             }
             else
             {
@@ -321,15 +328,18 @@ sub status
             else
             {
                 my ($sts_size, $sts_cov) = get_sts_cov($specimen, $yield);
+                my $sts_status = `tolqc-status -t sts $specimen | cut -f2,3`;
+                chomp $sts_status;
+                my ($sts_pacbio_status, $sts_hic_stats) = split /\s+/, $sts_status;
                 if ($cov)
                 {
                     if ($tech eq 'pacbio')
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date, "..$sts_pacbio_status", $sts_hic_stats);
                     }
                     else
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     print "\n"
                 }
@@ -337,11 +347,11 @@ sub status
                 {
                     if ($tech eq 'pacbio')
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "-", $sts_cov, "","", $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "-", $sts_cov, "","", $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     else
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "", "", "-",$sts_cov, $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "", "", "-",$sts_cov, $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     print "\n"
                 }
@@ -467,15 +477,18 @@ sub status
             else
             {
                 my ($sts_size, $sts_cov) = get_sts_cov($specimen, $yield);
+                my $sts_status = `tolqc-status -t sts $specimen | cut -f2,3`;
+                chomp $sts_status;
+                my ($sts_pacbio_status, $sts_hic_stats) = split /\s+/, $sts_status;
                 if ($cov)
                 {
                     if ($tech eq 'pacbio')
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, $cov, $sts_cov, "", "", $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     else
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, $size/1e6, $het, 100 * $rep / $size, "", "", $cov, $sts_cov, $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     print "\n"
                 }
@@ -483,11 +496,11 @@ sub status
                 {
                     if ($tech eq 'pacbio')
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "-", $sts_cov, "","", $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "-", $sts_cov, "","", $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     else
                     {
-                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "", "", "-",$sts_cov, $last_date);
+                        print join "\t", ($specimen, $sts_size/1e6, "", "", "", "", "", "-",$sts_cov, $last_date, $sts_pacbio_status, $sts_hic_stats);
                     }
                     print "\n"
                 }

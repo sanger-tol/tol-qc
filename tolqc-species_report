@@ -55,22 +55,29 @@ die("Expected TOLQCROOT environment variable to be set") unless (exists $ENV{TOL
 my $root = qq[$ENV{TOLQCROOT}];
 
 # We expect each input line to be a ToLQC directory or a species name
-while(my $dir = <>)
+if ($ARGV[0] && -d $ARGV[0])
 {
-    chomp $dir;
-    if (-d $dir)
+    make_report($ARGV[0]);
+}
+else
+{
+    while(my $dir = <>)
     {
-        make_report($dir);
-    }
-    else
-    {
-        # If the input is not a directory, assume it is a species
-        # name and look for the project directory with that species
-        $dir =~ s/ /_/g;
-        my @projects = glob(qq[$root/data/*/*/$dir]);
-        foreach my $project (@projects)
+        chomp $dir;
+        if (-d $dir)
         {
-            make_report($project);
+            make_report($dir);
+        }
+        else
+        {
+            # If the input is not a directory, assume it is a species
+            # name and look for the project directory with that species
+            $dir =~ s/ /_/g;
+            my @projects = glob(qq[$root/data/*/*/$dir]);
+            foreach my $project (@projects)
+            {
+                make_report($project);
+            }
         }
     }
 }
@@ -96,7 +103,7 @@ sub make_report
     $species =~ s/_/ /g;
     my $species_u = $species;
     $species_u  =~ s/ /_/g;
-    print STDERR "Generating ToLQC report for $species: https://tolqc.cog.sanger.ac.uk/$group/$species_u\n";
+    print STDERR "Generating ToLQC report for $species: https://tolqc.cog.sanger.ac.uk/$group/$species_u/\n";
 
     my $spp = get_specimens($species,$group);
     my $sts = get_sts_record($species,$spp);
@@ -105,6 +112,7 @@ sub make_report
     {
         next unless (exists $$rec{public_name} && $$rec{public_name});
         $gr = $rec;
+        last;
     }
     unless (scalar @$sts > 0 && $gr)
     {
@@ -124,6 +132,7 @@ sub make_report
     {
         next unless (exists $$rec{public_name} && $$rec{public_name});
         $gr = $rec;
+        last;
     }
     unless ($gr)
     {
@@ -170,7 +179,7 @@ sub get_sts_record
             next;
         }
         next unless (scalar @line >= $index && scalar @line >= $index2);
-        next unless ($line[$index] eq $species || exists $spp{"$line[$index2]"});
+        next unless ($line[$index] && $line[$index] eq $species || exists $spp{"$line[$index2]"});
         my %hash;
         @hash{@keys} = @line;
         if (!$hash{biospecimen_id} && $hash{sample_same_as})
@@ -331,14 +340,14 @@ sub get_cobionts
               <div class="card">
                 <div class="card-header" id="headingTwo">
                   <h5 class="mb-0">
-                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="false" aria-controls="collapseTwo">
-                      SSU Marker species
+                    <button class="btn btn-link" data-toggle="collapse" data-target="#collapseTwo" aria-expanded="true" aria-controls="collapseTwo">
+                      MarkerScan: species composition
                     </button>
                   </h5>
                 </div>
-                <div id="collapseTwo" class="collapse" aria-labelledby="headingTwo">
+                <div id="collapseTwo" class="collapse show" aria-labelledby="headingTwo">
                   <div class="card-body">
-                    <p>Species composition by small subunit (SSU) presence in the assembly.</p>
+                    <p>Species composition by small subunit (SSU) presence in the assembly with <a href="https://github.com/CobiontID/MarkerScan">MarkerScan</a>.</p>
 
                     <table id="marker_species_table"
                         data-toggle="table"
@@ -371,13 +380,13 @@ sub get_cobionts
                 <div class="card-header" id="headingFour">
                   <h5 class="mb-0">
                     <button class="btn btn-link" data-toggle="collapse" data-target="#collapseFour" aria-expanded="false" aria-controls="collapseFour">
-                      SSU Marker re-assembly
+                      MarkerScan: cobiont assembly
                     </button>
                   </h5>
                 </div>
                 <div id="collapseFour" class="collapse" aria-labelledby="headingFour">
                   <div class="card-body">
-                    <p>Re-assembly of reads classified under each identified SSU Marker family.</p>
+                    <p><a href="https://github.com/CobiontID/MarkerScan">MarkerScan</a> cobiont assembly by read separation based on observed families (see above). These reads are both aligned to the assembly and independently re-assembled. The quality of these assemblies is assessed by their completeness according to BUSCO, their span and the number of reads they encompass. For more information <a href="https://github.com/CobiontID/MarkerScan">here</a>.</p>
 
                     <table id="marker_families_table"
                         data-toggle="table"
@@ -397,7 +406,7 @@ sub get_cobionts
                                 <th data-field="family" rowspan="2" data-valign="middle" data-sortable="true" data-formatter="family_taxon_formatter">family</th>
                                 <th colspan="3">classified reads</th>
                                 <th colspan="4">original assembly</th>
-                                <th colspan="5">re-assembly</th>
+                                <th colspan="4">re-assembly</th>
                             </tr>
                             <tr>
                                 <th data-field="ClassifiedReads" data-sortable="true" data-formatter="local_formatter">count</th>
@@ -407,13 +416,12 @@ sub get_cobionts
                                 <th data-field="Busco_Assembly" data-valign="middle" data-sortable="false">BUSCO</th>
                                 <th data-field="BuscoNucmer_Assembly_Contigs"data-valign="middle" data-sortable="false" data-formatter="local_formatter">contigs</th>
                                 <th data-field="BuscoNucmer_Assembly_ContigLength" data-valign="middle" data-sortable="false">contig length</th>
-                                <th data-field="BuscoNucmer_Assembly_Reads" data-valign="middle" data-sortable="false" data-formatter="local_formatter">reads</th>
+                                <th data-field="BuscoNucmer_Assembly_Reads" data-valign="middle" data-sortable="false" data-formatter="local_formatter">number of reads</th>
 
                                 <th data-field="Busco_Re-Assembly" data-valign="middle" data-sortable="false">BUSCO</th>
                                 <th data-field="BuscoNucmer_Re-Assembly_Contigs"data-valign="middle" data-sortable="false" data-formatter="local_formatter">contigs</th>
                                 <th data-field="BuscoNucmer_Re-Assembly_ContigLength" data-valign="middle" data-sortable="false">contig length</th>
-                                <th data-field="BuscoNucmer_Re-Assembly_Reads" data-valign="middle" data-sortable="false" data-formatter="local_formatter">additional reads</th>
-                                <th data-field="plot" data-valign="middle" data-align='right' data-sortable="false" data-formatter="gscope_detail_formatter">circos</th>
+                                <th data-field="BuscoNucmer_Re-Assembly_Reads" data-valign="middle" data-sortable="false" data-formatter="local_formatter">number of reads</th>
 
                             </tr>
                         </thead>
@@ -515,7 +523,13 @@ sub generate_html
     $illumina_json  = 'null' unless ($illumina_json);
 
     my $asm_json = -d 'working' ? `find working -type f -name \*.fa*.gz.stats -o -name out_scaffolds_final.fa.stats -o -name scaffolds_FINAL.fasta.stats | grep -v seqs | grep -v a_ctg | grep -v htig | asm2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
-    my $organelles_json = -d 'working' ? `find working -mindepth 3 -maxdepth 3 -type f -name final_mitogenome.fasta | mitohifi2json -p` : 'null';
+    my $organelles_json = -d 'working' ? `find working -mindepth 3 -maxdepth 3 -type f -name final_mitogenome.fasta | mitohifi2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    my $oatk_json = -d 'working' ? `find working -mindepth 4 -maxdepth 4 -type f -name \*oatk\*.fasta | grep -v unassembled | oatk2json -p -u -g "$$data{group}/$$data{_name}"` : 'null';
+    $organelles_json = $oatk_json unless ($oatk_json eq 'null' || $oatk_json eq '[]');
+    # $organelles_json =~ s/\]\[/,/;
+    # $organelles_json =~ s/^\[,/[/;
+    # $organelles_json =~ s/,\]$/]/;
+    # $organelles_json  = 'null' unless ($organelles_json);
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
@@ -527,9 +541,11 @@ sub generate_html
     my $size = exists $$goat{records}->[0]{record}{attributes}{genome_size} ? format_number( int($$goat{records}->[0]{record}{attributes}{genome_size}{value} /1e6) ) : '';
     my $asm_size = exists $$goat{records}->[0]{record}{attributes}{assembly_span} ? format_number( int($$goat{records}->[0]{record}{attributes}{assembly_span}{value} /1e6) ) : '';
     my $chr_num = exists $$goat{records}->[0]{record}{attributes}{chromosome_number} ? $$goat{records}->[0]{record}{attributes}{chromosome_number}{value} : '';
+    my $ploidy = exists $$goat{records}->[0]{record}{attributes}{ploidy} ? $$goat{records}->[0]{record}{attributes}{ploidy}{max} : '';
     my $goat_gs = $size ? [ $size, $$goat{records}->[0]{record}{attributes}{genome_size}{aggregation_source} ] : ['unknown','unknown'];
     my $goat_asm = $asm_size ? [ $asm_size, $$goat{records}->[0]{record}{attributes}{assembly_span}{aggregation_source} ] : ['unknown','unknown'];
     my $goat_chr = $chr_num ? [ $chr_num, $$goat{records}->[0]{record}{attributes}{chromosome_number}{aggregation_source} ] : ['unknown','unknown'];
+    my $goat_ploidy = $ploidy ? [ $ploidy, $$goat{records}->[0]{record}{attributes}{ploidy}{aggregation_source} ] : ['unknown','unknown'];
     my $tolid_prefix =  '';
     if (exists $$goat{records}->[0]{record}{taxon_names})
     {
@@ -688,6 +704,10 @@ sub generate_html
                         <td>$$goat_chr[0] ($$goat_chr[1])</td>
                     </tr>
                     <tr>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> ploidy:</th>
+                        <td>$$goat_ploidy[0] ($$goat_ploidy[1])</td>
+                    </tr>
+                    <tr>
                         <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://id.tol.sanger.ac.uk/">ToLID</a> prefix:</th>
                         <td>$$data{tolid_prefix}</td>
                     </tr>
@@ -815,6 +835,7 @@ sub generate_html
                     <thead>
                         <tr>
                             <th data-field="pipeline" data-sortable="true">pipeline</th>
+                            <th data-field="model" data-sortable="true" data-visible="false">model</th>
                             <th data-field="specimen" data-sortable="true">specimen</th>
                             <th data-field="sanger_id" data-sortable="true" data-visible="false">sample</th>
                             <th data-field="date" data-sortable="true">date</th>
@@ -910,6 +931,7 @@ sub generate_html
                     <thead>
                         <tr>
                             <th data-field="pipeline_id_lims" data-sortable="true">pipeline</th>
+                            <th data-field="model" data-sortable="true" data-visible="false">model</th>
                             <th data-field="type" data-sortable="true" data-visible="false">source</th>
                             <th data-field="specimen" data-sortable="true">specimen</th>
                             <th data-field="date" data-sortable="true">date</th>
@@ -918,6 +940,12 @@ sub generate_html
                             <th data-field="total_length" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
                             <th data-field="average_quality" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg qual</th>
                             <th data-field="average_length" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg length</th>
+
+                            <th data-field="bases_mapped_cigar" data-align='right' data-sortable="true" data-formatter="bases_pct_formatter" data-visible="false">mapped bases (&#37;)</th>
+                            <th data-field="bases_duplicated" data-align='right' data-sortable="true" data-formatter="bases_pct_formatter" data-visible="false">dups (&#37;)</th>
+                            <th data-field="reads_MQ0" data-align='right' data-sortable="true" data-formatter="reads_pct_formatter" data-visible="false">MQ0 (&#37;)</th>
+                            <th data-field="insert_size_average" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">avg insert</th>
+
                             <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter">sample accession</th>
                             <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter">run accession</th>
                             <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false">exp accession</th>
@@ -981,7 +1009,7 @@ sub generate_html
             <hr/>
 
             <h2><a name="organelles">Organelles</a></h2>
-            <p>In-progress organelle results from <a href="https://github.com/marcelauliano/MitoHiFi">MitoHiFi2</a>.</p>
+            <p>In-progress organelle results from <a href="https://github.com/marcelauliano/MitoHiFi">MitoHiFi</a> or <a href="https://github.com/c-zhou/oatk">Oatk</a>.</p>
             <div class="section" id="organelles">
                 <div class="organelletoolbar">
                     <button id="organellebutton" class="btn btn-secondary">show details</button>
@@ -1006,11 +1034,16 @@ sub generate_html
                         <tr>
                             <th data-field="specimen" data-sortable="true">specimen</th>
                             <th data-field="asm" data-sortable="true">asm</th>
+                            <th data-field="organelle" data-sortable="true">organelle</th>
                             <th data-field="date" data-sortable="true">date</th>
                             <th data-field="mitogenome_length" data-sortable="true" data-formatter="local_formatter" data-align="right">length</th>
                             <th data-field="mitogenome_gene_count" data-sortable="true" data-formatter="local_formatter" data-align="right">genes</th>
                             <th data-field="frameshifts_found" data-sortable="true">frameshifts</th>
                             <th data-field="is_circular" data-sortable="true">is circular</th>
+                            <th data-field="seqs" data-sortable="true" data-visible="false">seqs</th>
+                            <th data-field="shared" data-sortable="true" data-visible="false">shared</th>
+                            <th data-field="unique" data-sortable="true" data-visible="false">unique</th>
+                            <th data-field="missing" data-sortable="true" data-visible="false">missing</th>
                             <th data-field="reference_accession" data-sortable="true" data-formatter="organelle_ref_formatter" data-align="right">reference</th>
                         </tr>
                     </thead>
@@ -1147,6 +1180,20 @@ sub generate_html
             }
             return ""
         }
+        function bases_pct_formatter(value,row) {
+            if (value) {
+                var pct = value>0 ? 100*value/row.total_length : 0;
+                return dec2_formatter(pct);
+            }
+            return ""
+        }
+        function reads_pct_formatter(value,row) {
+            if (value) {
+                var pct = value>0 ? 100*value/row.sequences : 0;
+                return dec2_formatter(pct);
+            }
+            return ""
+        }
         function length_formatter(value,row) {
             if (row.scaffold_sum) {
                 return row.scaffold_sum.toLocaleString();
@@ -1211,6 +1258,16 @@ sub generate_html
         }
         function organelle_detail_formatter(index, row) {
             var organelledetail = '<pre>'+row.txt+'</pre>';
+
+            var x;
+            for (x in sortObject(row)) {
+                if (x.match(/^plot/)) {
+                    var img = row[x][0];
+                    var label = row[x][1];
+                    organelledetail += '<a href="'+img+'" data-toggle="lightbox" data-title="'+label+' '+row.specimen+'" data-toggle="lightbox" data-gallery="asm'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+
             return organelledetail
         }
         function gscope_detail_formatter(index, row) {
@@ -1333,7 +1390,7 @@ sub generate_html
         function markerStyle(row, index) {
             if (row.Classification)
             {
-                if (row.Classification.embl_ebi_ena.match(/Chloroplast/) || row.Classification.slv.match(/Chloroplast/)) {
+                if (row.Classification.embl_ebi_ena.match(/Chloroplast;/) || row.Classification.slv.match(/Chloroplast;/)) {
                     return {
                         classes: 'table-success',
                     }
@@ -1354,8 +1411,9 @@ sub generate_html
                     }
                 }
                 var lineage = '$$taxon{lineage}';
-                var classification = row.Classification.embl_ebi_ena;
-                if (!lineage.startsWith(classification)) {
+                var class_array = row.Classification.embl_ebi_ena.split(';');
+                var classification = class_array[class_array.length - 2];
+                if (!lineage.includes(classification)) {
                     return {
                         classes: 'table-danger',
                     }

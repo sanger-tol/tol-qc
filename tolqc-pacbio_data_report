@@ -7,7 +7,7 @@ use File::Temp qw/ tempfile tempdir /;
 use JSON;
 use File::Basename;
 
-my $pacbio_json = `for type in genomic transcriptomic; do for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name \${type}_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*.stats; done; done | grep pacbio | pbstats2json -m -b $ENV{TOLQCROOT}/data/ -p`;
+my $pacbio_json = `for type in genomic transcriptomic; do for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name \${type}_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*.stats; done; done | grep pacbio | grep -v "/tmp/" | pbstats2json -m -b $ENV{TOLQCROOT}/data/ -p`;
 
 my $accessions = load_accessions();
 my $pacbio = decode_json($pacbio_json);
@@ -17,6 +17,7 @@ foreach my $rec (@$pacbio)
     my $file = basename($$rec{input});
     $file =~ s/\.stats$//;
     $file =~ s/\.rmdup//;
+    $file =~ s/\.hifi_reads/.ccs/;
     if (exists $$accessions{$file})
     {
         $$rec{run_accession} = $$accessions{$file}->{run};
@@ -138,8 +139,8 @@ print $fh (qq[
                             <th data-field="MovieLength" data-sortable="true" data-visible="false" data-filter-control="select">movie length</th>
                             <th data-field="ExtensionTime" data-sortable="true" data-visible="false" data-filter-control="select">extension length</th>
                             <th data-field="InsertSize" data-sortable="true" data-visible="false">insert size</th>
-                            <th data-field="tag_index" data-sortable="true" data-filter-control="select">tag</th>
-                            <th data-field="tag_sequence" data-sortable="true" data-visible="false" data-filter-control="select">tag sequence</th>
+                            <th data-field="tag_index" data-sortable="true" data-filter-control="input">tag</th>
+                            <th data-field="tag_sequence" data-sortable="true" data-visible="false" data-filter-control="input">tag sequence</th>
                             <th data-field="accession_number" data-sortable="true" data-formatter="biosample_formatter" data-filter-control="input">sample accession</th>
                             <th data-field="run_accession" data-sortable="true" data-formatter="ena_formatter" data-filter-control="input">run accession</th>
                             <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">exp accession</th>
@@ -360,6 +361,7 @@ sub load_accessions
         $file = basename($file);
         $file =~ s/\.(cr|b)am$//;
         $file =~ s/\.reads$/.ccs/;
+        $file =~ s/\.hifi_reads/.ccs/;
         $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
     }
     close $fh;

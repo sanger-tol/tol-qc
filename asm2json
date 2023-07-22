@@ -97,12 +97,13 @@ sub error
 
 sub parse_params
 {
-    my $opts = { stdin => 0, upload => 0, group => '', base => "$ENV{PWD}/", regex => '([^\/]+)/preqc/k\d+/(\S+).k\d+.summary.txt' };
+    my $opts = { stdin => 0, upload => 0, group => '', base => "$ENV{PWD}/", regex => '([^\/]+)/preqc/k\d+/(\S+).k\d+.summary.txt', label => '' };
     while (defined(my $arg=shift(@ARGV)))
     {
         if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
         elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
         elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-l' || $arg eq '--label' ) { $$opts{label} = shift(@ARGV); next; }
         elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
         elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
         else { push @{$$opts{inputs}}, $arg; }
@@ -117,7 +118,7 @@ sub parse_asmstats
     $input = Cwd::abs_path($input);
     my $base = basename($input);
     my $dir = dirname($input);
-    my ($species_u,$specimen,$asm,$y,$m,$d,$stage) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})/([^\/]+)};
+    my ($species_u,$specimen,$asm,$y,$m,$d,$stage) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})[^\/]*/([^\/]+)};
     return '' unless ($species_u && $specimen && $asm && $y && $m && $d);
     unless ($stage eq $base)
     {

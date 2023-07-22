@@ -124,7 +124,7 @@ sub get_common_name_map
 {
     my $map;
     my $url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTU-En_URbYPtfyjBueQhnz7wYHt-OHVxvRyv9tNvCUPCTX9EEzxOL41QCUh6hgVNv-Vv_gLSAMJXv-/pub?gid=1442224132&single=true&output=tsv';
-    open(my $fh, qq[curl -s -L '$url' | cut -f8,12,17-20 |]);
+    open(my $fh, qq[curl -s -L '$url' | cut -f8,13,17,18,19,21 |]);
     while(<$fh>)
     {
         chomp;
@@ -252,10 +252,12 @@ sub get_assembly_status
         {
             my $acc_file = qq[$dir/$asm/insdc/ACCESSION];
             my $acc = -s $acc_file ? `cat $acc_file` : ''; chomp $acc;
+            next unless ($acc && $acc =~ /GCA/);
             $status = { name => $asm, stage => 'RELEASED', accession => $acc };
         }
         elsif ($type eq 'curated')
         {
+            next if ($asm =~ /_/);
             $status = { name => $asm, stage => 'CURATED', accession => '' };
         }
         elsif ($type eq 'draft')

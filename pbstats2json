@@ -131,10 +131,11 @@ sub parse_asmstats
     if ($instrument)
     {
         $$stats{platform} = 'PacBio';
-        $$stats{model}  = 'RSII' if ($instrument =~ /^m16/);
         $$stats{model}  = 'Sequel' if ($instrument =~ /^m5/);
         $$stats{model}  = 'Sequel II' if ($instrument =~ /^m6/);
+        $$stats{model}  = 'Revio' if ($instrument =~ /^m8/);
         $$stats{model} .= 'e' if ($instrument =~ /e$/);
+        $$stats{model}  = 'RSII' unless (exists $$stats{model});
     }
     if (exists $$stats{pipeline_id_lims} && $$stats{pipeline_id_lims} && $$stats{pipeline_id_lims} ne 'NULL')
     {
@@ -312,6 +313,15 @@ sub movie2lims
                 'ccs_npasses_hist' => 'Number of passes',
                 'ccs_readlength_hist' => 'HiFi read length distribution',
                 'readlength_qv_hist2d.hexbin' => 'Accuracy versus read length density',
+
+                'bq_histogram' => 'Barcode quality distribution',
+                'ccs_all_readlength_hist' => 'Read length distribution (all)',
+                'ccs_hifi_read_length_yield' => 'HiFi yield by read length',
+                'm5c_detections' => 'CpG methylation in reads',
+                'm5c_detections_hist' => 'CpG methylation in reads histogram',
+                'nreads' => 'Number of reads per barcode',
+                'nreads_histogram' => 'Number of reads per barcode histogram',
+                'readlength_histogram' => 'Mean readlength histogram',
             );
             my @imgs = glob(qq[$runreportdir/*.png]);
             foreach my $img (sort @imgs)
@@ -356,9 +366,11 @@ sub movie2lims
     close($fh);
     my %pipeline_map = (
         'PacBio_Ultra_Low_Input' => 'PacBio - HiFi (ULI)',
-        'PacBio_Ultra_Low_Input_mplx' => 'PacBio - HiFi (ULI mplx)',
+        'PacBio_Ultra_Low_Input_mplx' => 'PacBio - HiFi (ULI)',
         'Pacbio_HiFi' => 'PacBio - HiFi',
-        'Pacbio_HiFi_mplx' => 'PacBio - HiFi (mplx)',
+        'Pacbio_HiFi_mplx' => 'PacBio - HiFi',
+        'PacBio_IsoSeq_mplx' => 'PacBio - IsoSeq',
+        'PacBio_Microbial_mplx' => 'PacBio - HiFi (Microbial)'
     );
     my $lims = -s "$tolqc/track/tol_pacbio_data.lims.tsv.part" ? "$tolqc/track/tol_pacbio_data.lims.tsv.part" : "$tolqc/track/tol_pacbio_data.lims.tsv";
     open my $fh2, qq[awk -F"\\t" '\$12=="$$hash{run}" && \$13=="$well" && \$9~/$barcode/' $lims | sed 's/NULL//g; s/ orion//g' |];

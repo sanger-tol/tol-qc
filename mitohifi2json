@@ -89,14 +89,16 @@ sub parse_mitohifi
     my ($species_u,$specimen,$asm,$y,$m,$d,$stage) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})/([^\/]+)};
     return '' unless ($species_u && $specimen && $asm && $y && $m && $d);
     return '' unless (-s "$dir/contigs_stats.tsv");
-    $asm = 'reads' if (basename($dir) eq 'mito.reads');
+    $asm = 'reads' if (basename($dir) =~ /reads/);
+    my $organelle = basename($dir) =~ /chloro/ ? 'pltd' : 'mito';
     my $species = $species_u;
     $species =~ s/_/ /g;
     my $hash = {
         species => $species,
         species_u => $species_u,
         specimen => $specimen,
-        asm => $asm,
+        asm => "mitohifi.$asm",
+        organelle => $organelle,
         date => "$y-$m-$d",
         mitogenome_length => 0+0,
         reference_length => 0+0,
@@ -132,6 +134,30 @@ sub parse_mitohifi
     close($fh);
     return '' unless ($reflen && $refgene && $len && $gene);
 
+    my %shared = ();
+    my %unique = ();
+    my %missing = ();
+    if (-s "$dir/shared_genes.tsv")
+    {
+        open(my $fh, "<$dir/shared_genes.tsv") || die("Could not open $dir/shared_genes.tsv");
+        while (<$fh>)
+        {
+            chomp;
+            next if (/^contig_id/);
+            s/\{//g;
+            s/\}//g;
+            s/\[[\d, ]*\]/1/g;
+            s/ //g;
+            s/"//g;
+            my (undef,$s,$u,$m) = split /\t/;
+            %shared = split /[:,]/, $s;
+            %unique = split /[:,]/, $u;
+            %missing = split /[:,]/, $m;
+            last;
+        }
+        close($fh);
+    }
+
     my ($refacc, $reforg);
     my (@fas) = glob("$dir/*.fasta");
     foreach my $fa (@fas)
@@ -144,6 +170,8 @@ sub parse_mitohifi
     }
     $reforg = '' unless ($reforg);
 
+    my $seqs = `grep "^>" $input | wc -l`; chomp $seqs;
+
     $$hash{reference_accession} = $refacc;
     $$hash{reference_length} = $reflen+0;
     $$hash{reference_organism} = $reforg;
@@ -152,7 +180,35 @@ sub parse_mitohifi
     $$hash{mitogenome_length} = $len+0;
     $$hash{mitogenome_gene_count} = $gene+0;
     $$hash{is_circular} = $is_circular;
+    $$hash{seqs} = $seqs;
     $$hash{txt} = $txt;
+
+    $$hash{shared} = scalar keys %shared;
+    $$hash{unique} = join ';', sort keys %unique;
+    $$hash{missing} = join ';', sort keys %missing;
+
+    my %plots = (
+        "contigs_annotations.png" => "MitoHiFi contig annotations",
+        "coverage_plot.png" => "MitoHiFi coverage",
+        "final_mitogenome.annotation.png" => "MitoHiFi final_mitogenome annotations",
+        "final_mitogenome.coverage.png" => "MitoHiFi final_mitogenome coverage",
+    );
+
+    while (my ($plot, $caption) = each %plots)
+    {
+        if (-s "$dir/$plot" && exists $$opts{base})
+        {
+            my $relplot = "$dir/$plot";
+            $relplot =~ s/$$opts{base}//;
+            my $label = $plot;
+            $label =~ s/\.png$//;
+            if ($$opts{upload})
+            {
+                system(qq[s3cmd put --acl-public --quiet $dir/$plot s3://tolqc/$$opts{group}/$relplot]) if ($$opts{group});
+            }
+            $$hash{"plot-$label"} = [ $relplot, $caption ];
+        }
+    }
 
     return $hash;
 }
