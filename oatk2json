@@ -1,0 +1,246 @@
+#!/usr/bin/env perl
+#
+#    Copyright (C) 2023 Genome Research Ltd.
+#
+#    Author: Shane McCarthy <sm15@sanger.ac.uk>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+# FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+use strict;
+use warnings;
+use Carp;
+use JSON;
+use Cwd;
+use File::Basename;
+
+my $opts = parse_params();
+my $output = [];
+if ($$opts{stdin})
+{
+    while (<>)
+    {
+        chomp;
+        my $res = parse_oatk($opts, $_);
+        push @$output, $res if $res;
+    }
+}
+else
+{
+    foreach my $file (@{$$opts{inputs}})
+    {
+        my $res = parse_oatk($opts, $file);
+        push @$output, $res if $res;
+    }
+}
+print encode_json($output);
+
+exit;
+
+#--------------------------------
+
+sub error
+{
+    my (@msg) = @_;
+    if ( scalar @msg ) { confess @msg; }
+    die
+        "\nAbout: Convert oatk results to json\n",
+        "Usage: oatk2json <oatk.fasta>\n",
+        "\n";
+}
+
+sub parse_params
+{
+    my $opts = { stdin => 0, base => "$ENV{PWD}/", group => '', upload => 0 };
+    while (defined(my $arg=shift(@ARGV)))
+    {
+        if ( $arg eq '-b' || $arg eq '--base' ) { $$opts{base} = shift(@ARGV); next; }
+        elsif ( $arg eq '-p' || $arg eq '--stdin' ) { $$opts{stdin} = 1; next; }
+        elsif ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
+        elsif ( $arg eq '-u' || $arg eq '--upload' ) { $$opts{upload} = 1; next; }
+        elsif ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
+        else { push @{$$opts{inputs}}, $arg; }
+    }
+    error() unless ($$opts{stdin}==1 || scalar @{$$opts{inputs}});
+    return $opts;
+}
+
+sub parse_oatk
+{
+    my ($opts,$input) = @_;
+    $input = Cwd::abs_path($input);
+    my $base = basename($input);
+    $base =~ s/\.fasta$//;
+    my $dir = dirname($input);
+    my ($species_u,$specimen,$asm,$y,$m,$d) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})/};
+    return '' unless ($species_u && $specimen && $asm && $y && $m && $d);
+    # return '' unless (-s "$dir/contigs_stats.tsv");
+    my $organelle = $base =~ /pltd$/ ? 'pltd' : 'mito';
+    $base =~ s/\.$organelle$//;
+    my $species = $species_u;
+    $species =~ s/_/ /g;
+
+    my ($k,$s,$c) = $base =~ m/k(\d+)\.s(\d+)\.c(\d+)/;
+
+    my $hash = {
+        species => $species,
+        species_u => $species_u,
+        specimen => $specimen,
+        asm => "oatk.reads",
+        organelle => $organelle,
+        date => "$y-$m-$d",
+        mitogenome_length => 0+0,
+        reference_length => 0+0,
+        reference_gene_count => 0+0,
+        mitogenome_gene_count => 0+0
+    };
+
+    my $reflen = '';
+    my $refgene = '';
+    my $fs = '';
+    my $len = '';
+    my $gene = '';
+    my $txt = '';
+    my $is_circular = '';
+    if (-s "$dir/$base.$organelle.mitohifi/contigs_stats.tsv")
+    {
+        open(my $fh, "<$dir/$base.$organelle.mitohifi/contigs_stats.tsv") || die("Could not open $dir/$base.$organelle.mitohifi/contigs_stats.tsv");
+        while (<$fh>)
+        {
+            # $txt .= $_;
+            chomp;
+            if (/^#/)
+            {
+                ($reflen, $refgene) = m/Related mitogenome is (\d+) bp long and has (\d+) genes/;
+                next;
+            }
+            if (/^final_mitogenome/)
+            {
+                my @line = split /\t/;
+                (undef,$fs,undef,$len,$gene) = @line;
+                if (scalar @line>5)
+                {
+                    $is_circular = $line[5] eq 'True' ? 'True' : 'False';
+                }
+                $fs =~ s/No frameshift found/None/;
+                next;
+            }
+
+        }
+        close($fh);
+    }
+
+    my %shared = ();
+    my %unique = ();
+    my %missing = ();
+    if (-s "$dir/$base.$organelle.mitohifi/shared_genes.tsv")
+    {
+        open(my $fh, "<$dir/$base.$organelle.mitohifi/shared_genes.tsv") || die("Could not open $dir/$base.$organelle.mitohifi/shared_genes.tsv");
+        while (<$fh>)
+        {
+            chomp;
+            next if (/^contig_id/);
+            s/\{//g;
+            s/\}//g;
+            s/\[[\d, ]*\]/1/g;
+            s/ //g;
+            s/"//g;
+            my (undef,$s,$u,$m) = split /\t/;
+            %shared = split /[:,]/, $s;
+            %unique = split /[:,]/, $u;
+            %missing = split /[:,]/, $m;
+            last;
+        }
+        close($fh);
+    }
+
+    my ($refacc, $reforg);
+    my (@fas) = glob("$dir/$base.$organelle.mitohifi/*.fasta");
+    foreach my $fa (@fas)
+    {
+        next if (basename($fa) eq $base);
+        $refacc = basename($fa);
+        $refacc =~ s/\.fasta//;
+        $reforg = `curl -sL https://www.ebi.ac.uk/ena/browser/api/embl/$refacc | grep "/organism" | cut -f2 -d'"'`;
+        chomp $reforg;
+    }
+    $reforg = '' unless ($reforg);
+
+    my $seqs = 0;
+    my $path = '';
+    if (-s $input)
+    {
+        $seqs = `grep "^>" $input | wc -l`; chomp $seqs;
+        my $head = `head -1 $input`;
+        ($len,$is_circular) = $head =~ m/length=(\d+).+circular=(\S+)/;
+        $is_circular = $is_circular eq 'true' ? 'True' : 'False';
+    }
+
+    $$hash{reference_accession} = $refacc;
+    $$hash{reference_length} = $reflen+0;
+    $$hash{reference_organism} = $reforg;
+    $$hash{reference_gene_count} = $refgene+0;
+    $$hash{frameshifts_found} = $fs;
+    $$hash{mitogenome_length} = $len+0;
+    $$hash{mitogenome_gene_count} = $gene+0;
+    $$hash{is_circular} = $is_circular;
+    $$hash{seqs} = $seqs;
+    $$hash{txt} = $txt;
+
+    $$hash{shared} = scalar keys %shared;
+    $$hash{unique} = join ';', sort keys %unique;
+    $$hash{missing} = join ';', sort keys %missing;
+
+    my %plots = (
+        "$base.$organelle.mitohifi/final_mitogenome.annotation.png" => "Oatk $organelle final_mitogenome annotations",
+        "$base.$organelle.png" => "Oatk $organelle bandage graph",
+        "../${base}_utg_final.png" => "Oatk bandage graph",
+    );
+
+    while (my ($plot, $caption) = each %plots)
+    {
+        if (-s "$dir/$plot" && exists $$opts{base})
+        {
+            my $relplot = "$dir/$plot";
+            $relplot =~ s/$$opts{base}//;
+            $relplot =~ s/\.\.\///;
+            my $label = $plot;
+            $label =~ s/\.png$//;
+            $label =~ s/\.$base\.$organelle\.mitohifi\///;
+            $label =~ s/\.\.\///;
+            if ($$opts{upload})
+            {
+                system(qq[s3cmd put --acl-public --quiet $dir/$plot s3://tolqc/$$opts{group}/$relplot]) if ($$opts{group});
+            }
+            $$hash{"plot-$label"} = [ $relplot, $caption ];
+        }
+    }
+
+    return $hash;
+}
+
+# # Related mitogenome is 16387 bp long and has 37 genes
+# contig_id   frameshifts_found   genbank_file    length(bp)  number_of_genes
+# final_mitogenome    CYTB;ND5    final_mitogenome.gb 58465   18
+# atg004892l_1    No frameshift found potential_contigs/atg004892l_1/atg004892l_1.annotation/atg004892l_1.annotation_MitoFinder_mitfi_Final_Results/atg004892l_1.annotation_mtDNA_contig.gb   16244   11
+# atg022158l_1    CYTB;ND6;ND5    potential_contigs/atg022158l_1/atg022158l_1.annotation/atg022158l_1.annotation_MitoFinder_mitfi_Final_Results/atg022158l_1.annotation_mtDNA_contig.gb   37121   17
+# atg004291l_1    ND2;ATP6    potential_contigs/atg004291l_1/atg004291l_1.annotation/atg004291l_1.annotation_MitoFinder_mitfi_Final_Results/atg004291l_1.annotation_mtDNA_contig.gb   33605   25
+# atg007250l_1    COX2    potential_contigs/atg007250l_1/atg007250l_1.annotation/atg007250l_1.annotation_MitoFinder_mitfi_Final_Results/atg007250l_1.annotation_mtDNA_contig.gb   49026   39
+# atg011827l_1    CYTB    potential_contigs/atg011827l_1/atg011827l_1.annotation/atg011827l_1.annotation_MitoFinder_mitfi_Final_Results/atg011827l_1.annotation_mtDNA_contig.gb   34327   23
+# atg010468l_1    No frameshift found potential_contigs/atg010468l_1/atg010468l_1.annotation/atg010468l_1.annotation_MitoFinder_mitfi_Final_Results/atg010468l_1.annotation_mtDNA_contig.gb   30905   18
+# atg021436l_1    No frameshift found potential_contigs/atg021436l_1/atg021436l_1.annotation/atg021436l_1.annotation_MitoFinder_mitfi_Final_Results/atg021436l_1.annotation_mtDNA_contig.gb   35340   32
