@@ -529,4 +529,5 @@ sub generate_landing_page
     ]);
     close($fh);
     system(qq[s3cmd put --quiet --acl-public $filename s3://tolqc/index.html]);
+    system(qq[rm -f $filename]);
 }

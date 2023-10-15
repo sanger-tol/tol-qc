@@ -365,6 +365,7 @@ sub movie2lims
     }
     close($fh);
     my %pipeline_map = (
+        'Pacbio_HiFi_PiMmS' => 'PacBio - HiFi (PiMmS)',
         'PacBio_Ultra_Low_Input' => 'PacBio - HiFi (ULI)',
         'PacBio_Ultra_Low_Input_mplx' => 'PacBio - HiFi (ULI)',
         'Pacbio_HiFi' => 'PacBio - HiFi',

@@ -995,8 +995,10 @@ sub generate_html
                             <th data-field="date" data-sortable="true">date</th>
                             <th data-field="contig_N50" data-sortable="true" data-formatter="local_formatter" data-align="right">contig N50</th>
                             <th data-field="contig_n" data-sortable="true" data-formatter="local_formatter" data-align="right">contigs</th>
+                            <th data-field="contig_largest" data-sortable="true" data-formatter="local_formatter" data-align="right" data-visible="false">largest contig</th>
                             <th data-field="scaffold_N50" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffold N50</th>
                             <th data-field="scaffold_n" data-sortable="true" data-formatter="local_formatter" data-align="right">scaffolds</th>
+                            <th data-field="scaffold_largest" data-sortable="true" data-formatter="local_formatter" data-align="right" data-visible="false">largest scaffold</th>
                             <th data-field="length" data-sortable="true" data-formatter="length_formatter" data-align="right">length</th>
                             <th data-field="busco" data-sortable="true" data-formatter="busco_formatter">BUSCO</th>
                             <th data-field="busco" data-sortable="true" data-formatter="busco_lineage_formatter" data-visible="false">BUSCO lineage</th>
@@ -1519,6 +1521,7 @@ sub generate_html
     ]);
     close($fh);
     system(qq[s3cmd --quiet put --acl-public $filename s3://tolqc/$$data{group}/$$data{_name}/index.html]);
+    system(qq[rm -f $filename]);
     return $data;
 }
 
