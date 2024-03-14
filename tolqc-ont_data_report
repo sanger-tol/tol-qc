@@ -1,0 +1,367 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use File::Temp qw/ tempfile tempdir /;
+use JSON;
+use File::Basename;
+
+my $ont_json = `for type in genomic; do for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name \${type}_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -name \*ont.fastq_\*.stats; done; done | grep "/ont/" | grep -v "/tmp/" | ontstats2json -m -u -b $ENV{TOLQCROOT}/data -p`;
+
+# my $accessions = load_accessions();
+# my $ont = decode_json($ont_json);
+# my $ont_update;
+# foreach my $rec (@$ont)
+# {
+#     my $file = basename($$rec{input});
+#     $file =~ s/\.stats$//;
+#     if (exists $$accessions{$file})
+#     {
+#         $$rec{run_accession} = $$accessions{$file}->{run};
+#         $$rec{exp_accession} = $$accessions{$file}->{exp};
+#         $$rec{study_accession} = $$accessions{$file}->{study};
+#         $$rec{accession_number} = $$accessions{$file}->{sample};
+#         $$rec{submission_date} = $$accessions{$file}->{date};
+#     }
+#     push @{$ont_update}, $rec;
+# }
+# $ont_json = encode_json($ont_update);
+write_file_to_s3($ont_json,qq[s3://tolqc/ont/data.json]);
+
+my ($fh, $filename) = tempfile();
+print $fh (qq[
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <base href="https://tolqc.cog.sanger.ac.uk/">
+        <meta charset="utf-8">
+        <title>Tree of Life QC: ONT Report</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+        <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.0/cosmo/bootstrap.min.css" media="screen">
+        <link rel="stylesheet" href="https://bootswatch.com/_assets/css/custom.min.css">
+        <link rel="stylesheet" href="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.css">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.css">
+        <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.6.3/css/all.css" integrity="sha384-UHRtZLI+pbxtHCWp1t77Bi1L4ZtiqrqD80Kn4Z8NTSRyMA2Fd33n5dQ8lWUE00s/" crossorigin="anonymous">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons\@1.11.3/font/bootstrap-icons.min.css">
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.min.js" integrity="sha512-bLT0Qm9VnAYZDflyKcBaQ2gg0hSYNQrJ8RilYldYQ1FxQYoCLtUjuuRuZo+fjqhx/qtq/1itJ0C2ejDxltZVFg==" crossorigin="anonymous"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+        <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+
+        <script src="https://cdn.jsdelivr.net/npm/tableexport.jquery.plugin\@1.10.21/tableExport.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/bootstrap-table.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/export/bootstrap-table-export.min.js"></script>
+        <script src="https://unpkg.com/bootstrap-table\@1.18.3/dist/extensions/filter-control/bootstrap-table-filter-control.min.js"></script>
+
+        <script src="https://bootswatch.com/_assets/js/custom.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/ekko-lightbox/5.3.0/ekko-lightbox.min.js"></script>
+    </head>
+    <body>
+        <div class="navbar navbar-expand-lg fixed-top navbar-dark bg-primary">
+            <div class="container-fluid">
+                <a href="/" class="navbar-brand">Tree of Life QC</a>
+                <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarResponsive">
+                    <ul class="navbar-nav">
+                        <li class="nav-item">
+                            <a class="nav-link" href="/">Species</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/pacbio/">PacBio</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/ont/">ONT</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/illumina/">Illumina</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/bionano/">BioNano</a>
+                        </li>
+                </div>
+            </div>
+        </div>
+
+
+        <div class="container-fluid">
+             <div class="page-header" id="banner">
+                <div class="row">
+                    <div class="col-lg-8 col-md-7 col-sm-6">
+                        <h1>ONT data report</h1>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section" id="ont">
+                <div class="onttoolbar">
+                    <button id="button" class="btn btn-secondary">show all plots</button>
+                    <button id="button2" class="btn btn-secondary">hide all plots</button>
+                </div>
+                <table id="ont_table" class="table table-sm"
+                    data-url="ont/data.json"
+                    data-show-export="true"
+                    data-export-data-type="all"
+                    data-export-types=['json','xml','csv','txt','excel']
+                    data-pagination="true"
+                    data-search="true"
+                    data-search-align="left"
+                    data-sort-name="date"
+                    data-buttons-align="left"
+                    data-toggle="table"
+                    data-show-toggle="true"
+                    data-show-columns="true"
+                    data-show-columns-toggle-all="true"
+                    data-show-export="true"
+                    data-sort-order="desc"
+                    data-detail-view="true"
+                    data-detail-view-icon="false"
+                    data-detail-view-by-click="true"
+                    data-toolbar=".onttoolbar"
+                    data-toolbar-align="right"
+                    data-filter-control="true"
+                    data-detail-formatter="ont_image_formatter">
+                    <thead>
+                        <tr>
+                            <th data-field="group" data-sortable="true" data-filter-control="input">group</th>
+                            <th data-field="specimen" data-sortable="true" data-filter-control="input">specimen</th>
+                            <th data-field="pipeline" data-sortable="true" data-filter-control="select">pipeline</th>
+                            <th data-field="platform" data-sortable="true" data-visible="false" data-filter-control="select">platform</th>
+                            <th data-field="model" data-sortable="true" data-visible="false" data-filter-control="select">model</th>
+                            <th data-field="sample" data-sortable="true" data-visible="false" data-filter-control="input">sample</th>
+                            <th data-field="date" data-sortable="true" data-filter-control="input">date</th>
+                            <th data-field="instrument" data-sortable="true" data-visible="false" data-filter-control="input">instrument</th>
+                            <th data-field="run" data-sortable="true" data-filter-control="input">run</th>
+                            <th data-field="flowcell" data-sortable="true" data-filter-control="input">flowcell</th>
+                            <th data-field="type" data-sortable="true" data-filter-control="input" data-filter-default="fastq_pass">type</th>
+                            <th data-field="biosample" data-sortable="true" data-formatter="biosample_formatter" data-filter-control="input">sample accession</th>
+                            <th data-field="run_accession" data-sortable="true" data-visible="false" data-formatter="ena_formatter" data-filter-control="input">run accession</th>
+                            <th data-field="exp_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">exp accession</th>
+                            <th data-field="study_accession" data-sortable="true" data-formatter="ena_formatter" data-visible="false" data-filter-control="input">study accession</th>
+                            <th data-field="submission_date" data-sortable="true" data-visible="false" data-filter-control="input">submission date</th>
+                            <th data-field="library_name" data-sortable="true" data-visible="false" data-filter-control="input">library name</th>
+                            <th data-field="n" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">reads</th>
+                            <th data-field="sum" data-align='right' data-sortable="true" data-formatter="local_formatter">yield</th>
+                            <th data-field="N50" data-align='right' data-sortable="true" data-formatter="local_formatter">N50</th>
+                            <th data-field="largest" data-align='right' data-sortable="true" data-formatter="local_formatter" data-visible="false">longest</th>
+                            <th data-field="a" data-align='right' data-sortable="true" data-visible="false">A (&#37;)</th>
+                            <th data-field="c" data-align='right' data-sortable="true" data-visible="false">C (&#37;)</th>
+                            <th data-field="g" data-align='right' data-sortable="true" data-visible="false">G (&#37;)</th>
+                            <th data-field="t" data-align='right' data-sortable="true" data-visible="false">T (&#37;)</th>
+                            <th data-field="species" data-sortable="true" data-formatter="species_link_formatter" data-filter-control="input">species</th>
+                            <th data-field="species_lims" data-sortable="true" data-formatter="species_link_formatter" data-visible="false" data-filter-control="input">species (lims)</th>
+                            <th data-field="report" data-sortable="true" data-formatter="html_report_formatter">report</th>
+                        </tr>
+                    </thead>
+                </table>
+            </div>
+
+            <hr/>
+
+            <div class="footer">
+                    <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
+                    <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
+                    at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
+                    Copyright &copy; 2020-2024 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
+            </div>
+        </div>
+
+        <script type="text/javascript">
+
+        \$(document).on('click', '[data-toggle="lightbox"]', function(event) {
+            event.preventDefault();
+            \$(this).ekkoLightbox();
+        });
+
+        function similarity_sorter(a, b, rowA, rowB) {
+            var aa = (rowA.match && rowA.species_name && rowA.match[0] && rowA.match[0].similarity && rowA.match[0].taxonomicidentification) ? rowA.match[0].similarity : 0.0;
+            var bb = (rowB.match && rowB.species_name && rowB.match[0] && rowB.match[0].similarity && rowB.match[0].taxonomicidentification) ? rowB.match[0].similarity : 0.0;
+            if (aa>0) {
+                var speciesA = rowA.species_name;
+                var taxA = rowA.match[0].taxonomicidentification;
+                if (!speciesA.startsWith(taxA) && !taxA.startsWith(speciesA)) { aa = -aa; }
+            }
+            if (bb>0) {
+                var speciesB = rowB.species_name;
+                var taxB = rowB.match[0].taxonomicidentification;
+                if (!speciesB.startsWith(taxB) && !taxB.startsWith(speciesB)) { bb = -bb; }
+            }
+            if (aa<bb) { return -1; }
+            else if (aa>bb) { return 1; }
+            else { return  0; }
+        }
+        function bold_url_formatter(value, row, index) {
+            return '<a href="'+row.specimen.url+'">'+value+'</a>';
+        }
+        function cellStyle(value, row, index) {
+            if (row.match && row.species_name && row.match[0] && row.match[0].taxonomicidentification)
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return {
+                        classes: 'bg-danger'
+                    }
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return {
+                        classes: 'bg-warning'
+                    }
+                } else {
+                    return {
+                        classes: 'bg-success'
+                    }
+                }
+            }
+            return {
+                classes: 'bg-warning'
+            }
+        }
+        function bold_topmatch_formatter(value, row) {
+            if (row.match && row.species_name && row.match[0])
+            {
+                var species_lims = row.species_name;
+                var taxonomicidentification = row.match[0].taxonomicidentification;
+                if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                } else {
+                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                }
+            }
+            return '';
+        }
+        function taxon_link_formatter(value, row) {
+            return '<a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id='+value+'">'+value+'</a>';
+        }
+        function species_link_formatter(value, row) {
+            if (value) {
+                var _name = value.replace(/ /g, "_");
+                return '<i><a href="'+row.group+'/'+_name+'/">'+value+'</a></i>';
+            }
+            return value;
+        }
+        function html_report_formatter(value, row) {
+            if (value) {
+                return '<a href="'+value+'"><i class="bi bi-filetype-html"></i></a>';
+            }
+            return "";
+        }
+
+        function sortObject(obj) {
+            return Object.keys(obj).sort().reduce(function (result, key) {
+                result[key] = obj[key];
+                return result;
+            }, {});
+        }
+        function illumina_image_formatter(index, row) {
+            var illumina_plots = '';
+            var x;
+            for (x in sortObject(row)) {
+                if (x.match(/^plot/)) {
+                    var img = encodeURIComponent(row[x]);
+                    illumina_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+row.type+' '+row.specimen+' samtools stats plots" data-toggle="lightbox" data-gallery="illumina'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return illumina_plots;
+        }
+        function local_formatter(value) {
+            if (value) {
+                return value.toLocaleString();
+            }
+            return '';
+        }
+        function dec2_formatter(value) {
+            return parseFloat(value).toFixed(2);
+        }
+        function info_formatter(value) {
+            return '<strong>' + value + '</strong>';
+        }
+        function biosample_formatter(value) {
+            if (value) {
+                if (value.match(/^SAM/)) {
+                    return '<a href="https://www.ebi.ac.uk/biosamples/samples/'+value+'">'+value+'</a>';
+                }
+                if (value.match(/^[ES]RS/)) {
+                    return '<a href="ttps://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                return value;
+            }
+            return ""
+        }
+        function ena_formatter(value) {
+            if (value) {
+                if (value.match(/^[SE]R/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                if (value.match(/^PRJ/)) {
+                    return '<a href="https://www.ebi.ac.uk/ena/browser/view/'+value+'">'+value+'</a>';
+                }
+                return value;
+            }
+            return "";
+        }
+        function ont_image_formatter(index, row) {
+            var ont_plots = '';
+            var x;
+            for (x in sortObject(row)) {
+                if (x.match(/^plot/)) {
+                    var img = row[x][0];
+                    var label = row[x][1];
+                    ont_plots += '<a href="'+img+'" data-toggle="lightbox" data-title="'+label+' '+row.specimen+'" data-toggle="lightbox" data-gallery="asm'+index+'"><img src="'+img+'" height="75px"></a>';
+                }
+            }
+            return ont_plots;
+        }
+
+        var \$button = \$('#button')
+        var \$button2 = \$('#button2')
+
+        \$(function() {
+            \$button.click(function () {
+                \$('#ont_table').bootstrapTable('expandAllRows')
+            })
+            \$button2.click(function () {
+                \$('#ont_table').bootstrapTable('collapseAllRows')
+            })
+        })
+
+        </script>
+    </body>
+</html>
+]);
+close($fh);
+
+system(qq[s3cmd --quiet --acl-public put $filename s3://tolqc/ont/index.html]);
+
+exit;
+
+sub write_file_to_s3
+{
+    my ($json,$file) = @_;
+    my ($fh, $jsonfile) = tempfile();
+    print $fh $json;
+    close $fh;
+    system(qq[s3cmd --quiet --acl-public put $jsonfile $file]);
+}
+
+sub load_accessions
+{
+    my $prefix = qq[$ENV{TOLQCROOT}/track/tol_subtrack];
+    my $accessions;
+    open(my $fh, "cat ${prefix}.fofn ${prefix}_pending.fofn |") || die("Could not open file $prefix");
+    while(<$fh>)
+    {
+        chomp;
+        my ($file,$run,$exp,$study,$sample,$date) = split /\t/;
+        $file = basename($file);
+        $$accessions{$file} = { run => $run, exp => $exp, study => $study, sample => $sample, date => $date };
+    }
+    close $fh;
+    return $accessions;
+}
