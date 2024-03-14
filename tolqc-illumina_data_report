@@ -157,7 +157,7 @@ print $fh (qq[
                     <a href="https://www.sanger.ac.uk/"><img style="float:right; height:50px" src="https://imputation.sanger.ac.uk/www/images/sanger_logo.png" class="img-responsive" alt="WTSI"></a>
                     <p class="copyright">Tree of Life Species Report is developed within the <a href="https://www.sanger.ac.uk/programme/tree-of-life/">Tree of Life Programme</a>
                     at the <a href="https://www.sanger.ac.uk/">Wellcome Sanger Institute</a><br />
-                    Copyright &copy; 2020-2022 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
+                    Copyright &copy; 2020-2024 Genome Research Limited (reg no. 2742969) is a charity registered in England with number 1021457.<br />
                     <a href="http://www.sanger.ac.uk/legal/">Terms and conditions</a> | <a href="http://www.sanger.ac.uk/legal/cookiespolicy.html">Cookies policy</a>.
             </div>
         </div>
