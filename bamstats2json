@@ -121,7 +121,12 @@ sub run2lims
     my %hash;
     # this is Sanger-specific labelling of Illumina run data:
     # RUN_LANE#PLEX or RUN_LANE
-    my ($id_run,$position,$tag_index) = $run =~ m/(\d+)_(\d+)#(\d+)/;
+    my ($id_run,$position,undef,$tag_index) = $run =~ m/(\d+)_(\d+)-(\d+)#(\d+)/;
+    $position = 'NULL' if ($id_run);
+    unless ($id_run)
+    {
+        ($id_run,$position,$tag_index) = $run =~ m/(\d+)_(\d+)#(\d+)/;
+    }
     unless ($id_run)
     {
         ($id_run,$position) = $run =~ m/(\d+)_(\d+)/;
