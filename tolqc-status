@@ -72,7 +72,7 @@ sub error
 
 sub parse_params
 {
-    my $opts = { input => '-', kmer => 31, jira => 0, project => '*', group => '*', label => '' };
+    my $opts = { input => '-', kmer => 31, jira => 0, topup => 0, project => '*', group => '*', label => '' };
     while (defined(my $arg=shift(@ARGV)))
     {
         if ( $arg eq '-t' || $arg eq '--tech' ) { $$opts{tech} = shift(@ARGV); next; }
@@ -82,6 +82,7 @@ sub parse_params
         if ( $arg eq '-p' || $arg eq '--project' ) { $$opts{project} = shift(@ARGV); next; }
         if ( $arg eq '-g' || $arg eq '--group' ) { $$opts{group} = shift(@ARGV); next; }
         if ( $arg eq '-j' || $arg eq '--jira' ) { $$opts{jira} = 1; next; }
+        if (                 $arg eq '--topup' ) { $$opts{topup} = 1; next; }
         if ( $arg eq '-?' || $arg eq '-h' || $arg eq '--help' ) { error(); }
         if (scalar @ARGV == 0) { $$opts{input} = $arg; next; }
         error("Unknown parameter \"$arg\". Run -h for help.\n");
@@ -360,7 +361,7 @@ sub status
         elsif ($tech eq 'data')
         {
             $specimen.= '*' unless ($specimen =~ m/[0-9\*]$/);
-            my (@dirs) = glob(qq[$ENV{TOLQCROOT}/data/$$opts{project}/$$opts{group}/*/genomic_data/$specimen/*]);
+            my (@dirs) = glob(qq[$ENV{TOLQCROOT}/data/$$opts{project}/$$opts{group}/*/*_data/$specimen/*]);
             unless (@dirs)
             {
                 print STDERR qq[No $tech data directory found for specimen $specimen... skipping\n];
@@ -373,6 +374,21 @@ sub status
                 $dtypes{"$base"}++;
             }
             print join "\t", ($specimen, sort keys %dtypes);
+            print "\n";
+        }
+        elsif ($tech eq 'rna-seq')
+        {
+            my $specimen_search = $specimen;
+            $specimen_search =~ s/\d+$/*/;
+            my (@dirs) = glob(qq[$ENV{TOLQCROOT}/data/$$opts{project}/$$opts{group}/*/transcriptomic_data/$specimen_search/rna-seq/*.fofn]);
+            if (@dirs)
+            {
+                print join "\t", ($specimen, '●');
+            }
+            else
+            {
+                print "$specimen\t";
+            }
             print "\n";
         }
         else
@@ -473,6 +489,15 @@ sub status
                     print qq[ GOAT coverage estimate: ${goat_cov}x based on yield and GOAT genome size: $$goat{size}M ($$goat{source}).];
                 }
                 print "\n";
+            }
+            elsif ($$opts{topup})
+            {
+                my ($sts_size, $sts_cov) = get_sts_cov($specimen, $yield);
+                my $size_txt = int( $size / 1e6 );
+                my $sts_size_txt = int( $sts_size / 1e6 );
+                my $specimenid = `awk '\$5=="$specimen"{print \$4}' $ENV{TOLQCROOT}/track/tol_sts.tsv | head -1`; chomp $specimenid;
+                print STDERR qq[# updating $specimen ($specimenid) genome size estimate ${sts_size_txt}M => ${size_txt}M\n];
+                print qq[curl -X POST "https://sts.tol.sanger.ac.uk/api/v1/specimens/assembly-feedback" -H "Authorization: \$STSAPIKEY_PROD" -H "accept: application/json" -H "Content-Type: application/json" -d '{ "specimen_id": "$specimenid", "platform_code": "PACBIO", "estimated_genome_size": $size }'\n];
             }
             else
             {
