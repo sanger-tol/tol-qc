@@ -118,18 +118,78 @@ sub parse_asmstats
     $input = Cwd::abs_path($input);
     my $base = basename($input);
     my $dir = dirname($input);
+    my ($species_dir,$asmdir) = $input =~ m/^(\S+)\/working\/([^\/]+)\//;
+    return unless $asmdir;
+    $asmdir = qq[$species_dir/working/$asmdir];
     my ($species_u,$specimen,$asm,$y,$m,$d,$stage) = $input =~ m{([^\/]+)/working/([^\/\.]+)\.([^\/]+)\.(\d{4})(\d{2})(\d{2})[^\/]*/([^\/]+)};
     return '' unless ($species_u && $specimen && $asm && $y && $m && $d);
-    unless ($stage eq $base)
+    my $asm_version = parse_asm_version($asmdir, $specimen);
+    if ($stage eq $base)
     {
+        if ($stage =~ /\.(hic|dip)\.(hap1|hap2)\./)
+        {
+            $asm .= ".$2";
+        }
+    }
+    else
+    {
+        if ($stage =~ /^scaff/)
+        {
+            my ($scaffdir) = $input =~ m/($asmdir\/$stage)\/(yahs|salsa)/;
+            if ($scaffdir && -s "$scaffdir/hic-mapping.conf")
+            {
+                my $is_purged = `grep purged $scaffdir/hic-mapping.conf`;
+                if ($is_purged)
+                {
+                    my ($purgedir) = $is_purged =~ m/\/([^\/]+)\/purged.fa.gz/;
+                    if ($purgedir)
+                    {
+                        if (-s "$asmdir/$purgedir/version")
+                        {
+                            my $purge_version = `cat $asmdir/$purgedir/version`;
+                            chomp $purge_version;
+                            $asm_version .= "; purge_dups $purge_version" if ($purge_version);
+                        }
+                    }
+                }
+            }
+        }
+        if ($stage =~ /^purg/)
+        {
+            my $purgedir = "$asmdir/$stage";
+            if (-d $purgedir && -s "$purgedir/version")
+            {
+                my $purge_version = `cat $purgedir/version`;
+                chomp $purge_version;
+                $asm_version .= "; purge_dups $purge_version";
+            }
+        }
         $asm .= ".$stage";
-        $asm .= ".yahs" if ($input =~ /out.break.yahs/);
+        if ($input =~ /out.break.yahs/)
+        {
+            $asm .= ".yahs";
+            my $yahs_version = parse_asm_version($dir, $specimen);
+            $asm_version .= "; $yahs_version" if ($yahs_version);
+        }
         $asm .= ".salsa" if ($input =~ /out.break.salsa/);
     }
     $base =~ s/\.fa(sta)?(\.gz)?\.stats$//;
     my $species = $species_u;
     $species =~ s/_/ /g;
-    my $stats = { species => $species, species_u => $species_u, specimen => $specimen, asm => $asm, date => "$y-$m-$d", a => 0+0, c => 0+0, g => 0+0, t => 0+0, n => 0+0, cpg => 0+0 };
+    my $stats = {
+        species => $species,
+        species_u => $species_u,
+        specimen => $specimen,
+        asm => $asm,
+        date => "$y-$m-$d",
+        a => 0+0,
+        c => 0+0,
+        g => 0+0,
+        t => 0+0,
+        n => 0+0,
+        cpg => 0+0,
+        asm_version => $asm_version,
+    };
 
     open(my $fh, "<$input") || die("Could not open $input");
     while (<$fh>)
@@ -379,7 +439,7 @@ sub parse_asmstats
             system(qq[s3cmd put --acl-public --quiet $plot s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
         }
     }
-    $plot = glob(qq[$dir/${base}.*.busco/circos.png]);
+    ($plot) = glob(qq[$dir/${base}.*.busco/circos.png]);
     if ($plot && -s $plot)
     {
         $plot =~ s/$$opts{base}//;
@@ -387,6 +447,16 @@ sub parse_asmstats
         if ($$opts{upload})
         {
             system(qq[s3cmd put --acl-public --quiet $plot s3://tolqc/$$opts{group}/$plot]) if ($$opts{group});
+        }
+    }
+    my ($pretext) = glob(qq[$dir/${base}.pretext]);
+    if ($pretext && -s $pretext)
+    {
+        $pretext =~ s/$$opts{base}//;
+        $$stats{"pretext"} = [ $pretext, basename($pretext) ];
+        if ($$opts{upload})
+        {
+            system(qq[s3cmd put --acl-public --quiet $pretext s3://tolqc/$$opts{group}/$pretext]) if ($$opts{group});
         }
     }
 
@@ -453,6 +523,37 @@ sub parse_busco
     }
     close($fh);
     return $res;
+}
+
+sub parse_asm_version
+{
+    my ($asmdir, $specimen) = @_;
+    my $version = '';
+    if (-s "$asmdir/$specimen.log")
+    {
+        $version = `grep Version $asmdir/$specimen.log | awk '{print \$3}'`;
+        chomp $version;
+        $version = "hifiasm $version";
+    }
+    elsif (-s "$asmdir/$specimen.hic.log")
+    {
+        $version = `grep Version $asmdir/$specimen.hic.log | awk '{print \$3}'`;
+        chomp $version;
+        $version = "hifiasm $version";
+    }
+    elsif (-s "$asmdir/out.log")
+    {
+        $version = `grep Version $asmdir/out.log | awk '{print \$3}'`;
+        chomp $version;
+        $version = "yahs $version";
+    }
+    elsif (-s "$asmdir/canu.out")
+    {
+        $version = `grep "\\-\\- canu" $asmdir/canu.out | awk '{print \$3}'`;
+        chomp $version;
+        $version = "canu $version";
+    }
+    return $version;
 }
 
 sub parse_merqury
