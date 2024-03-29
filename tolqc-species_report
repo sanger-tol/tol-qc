@@ -570,11 +570,11 @@ sub generate_html
     my ($mashscreen_json, $marker_json, $readviz_json, $contigviz_json, $cobionts_html) = get_cobionts($data);
 
     my $genomic_data = '';
-    if (-s "genomic_data/$$data{_name}.mash.png")
+    if (-s "genomic_data/all.mash.png")
     {
-        my $file =  "genomic_data/$$data{_name}.mash.png";
+        my $file =  "genomic_data/all.mash.png";
         system(qq[s3cmd --acl-public --quiet put $file s3://tolqc/$$data{group}/$$data{_name}/$file]);
-        $genomic_data .= qq[<a href="genomic_data/$$data{_name}.mash.png" data-toggle="lightbox" data-gallery="genomic_data" data-footer="Mash plots show distance between sketches for each data set. Can be use to spot species swaps. Be aware though that structure in the heatmap may be due to technology differences (higher error rate reads vs low error rate reads) or large differences in coverage." data-title="$$data{name} <a href='https://mash.readthedocs.io/en/latest/'>Mash</a> plot"><img src="genomic_data/$$data{_name}.mash.png" class="figure-img img-fluid" width="200"></a>\n];
+        $genomic_data .= qq[<a href="$file" data-toggle="lightbox" data-gallery="genomic_data" data-footer="Mash plots show distance between sketches for each data set. Can be used to spot species swaps. Be aware though that structure in the heatmap may be due to technology differences (higher error rate reads vs low error rate reads) or large differences in coverage." data-title="$$data{name} <a href='https://mash.readthedocs.io/en/latest/'>Mash</a> plot"><img src="$file" class="figure-img img-fluid" width="200"></a>\n];
     }
     foreach my $file (glob("genomic_data/*/*/stats/*.hic.png"))
     {
@@ -1115,7 +1115,7 @@ sub generate_html
                             <th data-field="mitogenome_gene_count" data-sortable="true" data-formatter="local_formatter" data-align="right">genes</th>
                             <th data-field="frameshifts_found" data-sortable="true">frameshifts</th>
                             <th data-field="is_circular" data-sortable="true">is circular</th>
-                            <th data-field="seqs" data-sortable="true" data-visible="false">seqs</th>
+                            <th data-field="seqs" data-sortable="true" data-visible="true">seqs</th>
                             <th data-field="shared" data-sortable="true" data-visible="false">shared</th>
                             <th data-field="unique" data-sortable="true" data-visible="false">unique</th>
                             <th data-field="missing" data-sortable="true" data-visible="false">missing</th>
