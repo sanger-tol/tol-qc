@@ -160,18 +160,19 @@ sub run2lims
     my $track = qq[$ENV{TOLQCROOT}/track];
     my $lims = -s "$track/tol_illumina_data.fofn.part" ? "$track/tol_illumina_data.fofn.part" : "$track/tol_illumina_data.fofn";
     my $fh;
-    if ($position eq 'NULL')
-    {
-        open $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$14=="$tag_index"' $lims | sed 's/NULL//g' |];
-    }
-    elsif ($tag_index eq 'NULL')
-    {
-        open $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$13=="$position"' $lims | sed 's/NULL//g' |];
-    }
-    else
-    {
-        open $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$13=="$position" && \$14=="$tag_index"' $lims | sed 's/NULL//g' |];
-    }
+    # if ($position eq 'NULL')
+    # {
+    #     open $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$14=="$tag_index"' $lims | sed 's/NULL//g' |];
+    # }
+    # elsif ($tag_index eq 'NULL')
+    # {
+    #     open $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$13=="$position"' $lims | sed 's/NULL//g' |];
+    # }
+    # else
+    # {
+    #     open $fh, qq[awk -F"\\t" 'BEGIN{OFS="\\t"}\$12=="$id_run" && \$13=="$position" && \$14=="$tag_index"' $lims | sed 's/NULL//g' |];
+    # }
+    open $fh, qq[egrep "$run.(b|cr)am" $lims | sed 's/NULL//g' |];
     while (<$fh>)
     {
         chomp;
