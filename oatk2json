@@ -122,7 +122,7 @@ sub parse_oatk
         open(my $fh, "<$dir/$base.$organelle.mitohifi/contigs_stats.tsv") || die("Could not open $dir/$base.$organelle.mitohifi/contigs_stats.tsv");
         while (<$fh>)
         {
-            # $txt .= $_;
+            $txt .= $_;
             chomp;
             if (/^#/)
             {
