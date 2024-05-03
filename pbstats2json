@@ -84,6 +84,7 @@ sub parse_asmstats
 {
     my ($opts,$input) = @_;
     $input = Cwd::abs_path($input) unless ($input =~ /^\//);
+    return if ($input =~ /cobiont/);
     my $group = $$opts{group};
     unless ($group)
     {
