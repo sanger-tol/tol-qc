@@ -536,11 +536,19 @@ sub generate_html
 
     my $taxon_json = `curl -sS "https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}" | jq -c .`;
     chomp $taxon_json;
-    my $taxon = decode_json($taxon_json);
-    $$taxon{lineage} =~ s/ //g;
-    my $goat_json = `curl -sS -X GET "https://goat.genomehubs.org/api/v0.0.1/record?recordId=$$data{taxon_id}&result=taxon" -H "accept: application/json" | jq -c .`;
+    if ($taxon_json)
+    {
+        my $taxon = decode_json($taxon_json);
+        $$data{lineage} = $$taxon{lineage};
+        $$data{lineage} =~ s/ //g;
+    }
+    my $goat_json = `curl -sS -X GET "https://goat.genomehubs.org/api/v2/record?recordId=$$data{taxon_id}&result=taxon&taxonomy=ncbi" -H "accept: application/json" | jq -c .`;
     chomp $goat_json;
     my $goat = decode_json($goat_json);
+    unless (exists $$data{lineage})
+    {
+        $$data{lineage} = goat2lineage($goat);
+    }
     my $size = exists $$goat{records}->[0]{record}{attributes}{genome_size} ? format_number( int($$goat{records}->[0]{record}{attributes}{genome_size}{value} /1e6) ) : '';
     my $asm_size = exists $$goat{records}->[0]{record}{attributes}{assembly_span} ? format_number( int($$goat{records}->[0]{record}{attributes}{assembly_span}{value} /1e6) ) : '';
     my $chr_num = exists $$goat{records}->[0]{record}{attributes}{chromosome_number} ? $$goat{records}->[0]{record}{attributes}{chromosome_number}{value} : '';
@@ -684,10 +692,10 @@ sub generate_html
                     <tr>
                         <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;">NCBI taxon id:</th>
                         <td>
-                        $$taxon{taxId}&nbsp;
-                        <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id=$$taxon{taxId}">NCBI</a>;
-                        <a href="https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$taxon{taxId}">ENA</a>;
-                        <a href="https://goat.genomehubs.org/record?recordId=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a>
+                        $$data{taxon_id}&nbsp;
+                        <a href="https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?mode=Info&id=$$data{taxon_id}">NCBI</a>;
+                        <a href="https://www.ebi.ac.uk/ena/taxonomy/rest/tax-id/$$data{taxon_id}">ENA</a>;
+                        <a href="https://goat.genomehubs.org/record?recordId=$$data{taxon_id}&result=taxon&taxonomy=ncbi">GoaT</a>
                         </td>
                     </tr>
                     <tr>
@@ -700,26 +708,26 @@ sub generate_html
                     </tr>
                     <tr>
                         <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;">NCBI lineage:</th>
-                        <td>$$taxon{lineage}</td>
+                        <td>$$data{lineage}</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> genome size (M):</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$data{taxon_id}&result=taxon&taxonomy=ncbi">GoaT</a> genome size (M):</th>
                         <td>$$goat_gs[0] ($$goat_gs[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> asm span (M):</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$data{taxon_id}&result=taxon&taxonomy=ncbi">GoaT</a> asm span (M):</th>
                         <td>$$goat_asm[0] ($$goat_asm[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> chr no.:</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$data{taxon_id}&result=taxon&taxonomy=ncbi">GoaT</a> chr no.:</th>
                         <td>$$goat_chr[0] ($$goat_chr[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> haploid no.:</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$data{taxon_id}&result=taxon&taxonomy=ncbi">GoaT</a> haploid no.:</th>
                         <td>$$goat_haploid_number[0] ($$goat_haploid_number[1])</td>
                     </tr>
                     <tr>
-                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$taxon{taxId}&result=taxon&taxonomy=ncbi">GoaT</a> ploidy:</th>
+                        <th scope="row" style="white-space:nowrap; padding-right:10px; text-align:right; vertical-align:top;"><a href="https://goat.genomehubs.org/records?record_id=$$data{taxon_id}&result=taxon&taxonomy=ncbi">GoaT</a> ploidy:</th>
                         <td>$$goat_ploidy[0] ($$goat_ploidy[1])</td>
                     </tr>
                     <tr>
@@ -1419,9 +1427,6 @@ sub generate_html
             return "";
         }
 
-        var taxon = $taxon_json;
-        \$('#taxon_table').bootstrapTable({data: [ taxon ]});
-
         var sts = $sts_json;
         \$('#sts_table').bootstrapTable({data: sts});
 
@@ -1509,7 +1514,7 @@ sub generate_html
                         classes: 'table-info',
                     }
                 }
-                var lineage = '$$taxon{lineage}';
+                var lineage = '$$data{lineage}';
                 var class_array = row.Classification.embl_ebi_ena.split(';');
                 var classification = class_array[class_array.length - 2];
                 if (!lineage.includes(classification)) {
@@ -1632,6 +1637,20 @@ sub generate_html
     system(qq[s3cmd --quiet put --acl-public $filename s3://tolqc/$$data{group}/$$data{_name}/index.html]);
     system(qq[rm -f $filename]);
     return $data;
+}
+
+sub goat2lineage
+{
+    my ($goat) = @_;
+    my $lineage = '';
+    if (exists $$goat{records}->[0]{record}{lineage})
+    {
+        foreach my $rank (reverse @{$$goat{records}->[0]{record}{lineage}})
+        {
+            $lineage .= "$$rank{scientific_name};";
+        }
+    }
+    return $lineage;
 }
 
 sub load_illumina_accessions
