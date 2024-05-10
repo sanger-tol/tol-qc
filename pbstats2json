@@ -84,7 +84,7 @@ sub parse_asmstats
 {
     my ($opts,$input) = @_;
     $input = Cwd::abs_path($input) unless ($input =~ /^\//);
-    return if ($input =~ /cobiont/);
+    return unless ($input =~ /\/stats\//);
     my $group = $$opts{group};
     unless ($group)
     {
@@ -98,6 +98,11 @@ sub parse_asmstats
     unless ($movie)
     {
         ($movie,$pipeline) = $base =~ m/([^\.]+)\.(ccs|subreads)(\.rmdup)?\.stats$/;
+    }
+    unless ($movie)
+    {
+        print STDERR "unclassified input [$input]\n";
+        return;
     }
     my ($instrument, $dt);
     if ($movie =~ /_[pX][0123]$/)
