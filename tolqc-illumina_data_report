@@ -22,6 +22,12 @@ foreach my $rec (@$illumina)
         $$rec{accession_number} = $$accessions{$$rec{run}}->{sample};
         $$rec{submission_date} = $$accessions{$$rec{run}}->{date};
     }
+    if (exists $$rec{match} && @{$$rec{match}})
+    {
+        $$rec{taxonomicidentification} = $$rec{match}->[0]->{taxonomicidentification};
+        $$rec{similarty} = $$rec{match}->[0]->{similarty};
+        delete $$rec{match};
+    }
     push @{$illumina_update}, $rec;
 }
 $illumina_json = encode_json($illumina_update);
@@ -260,15 +266,15 @@ print $fh (qq[
             return "";
         }
         function cellStyle(value, row, index) {
-            if (row.match && row.species_name)
+            if (row.taxonomicidentification && row.species_name)
             {
                 var species_lims = row.species_name;
-                var taxonomicidentification = row.match[0].taxonomicidentification;
+                var taxonomicidentification = row.taxonomicidentification;
                 if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
                     return {
                         classes: 'bg-danger'
                     }
-                } else if (parseFloat(row.match[0].similarity) < 0.97) {
+                } else if (parseFloat(row.similarity) < 0.97) {
                     return {
                         classes: 'bg-warning'
                     }
@@ -283,16 +289,16 @@ print $fh (qq[
             }
         }
         function bold_topmatch_formatter(value, row) {
-            if (row.match && row.species_name)
+            if (row.taxonomicidentification && row.species_name)
             {
                 var species_lims = row.species_name;
-                var taxonomicidentification = row.match[0].taxonomicidentification;
+                var taxonomicidentification = row.taxonomicidentification;
                 if (!species_lims.startsWith(taxonomicidentification) && !taxonomicidentification.startsWith(species_lims)) {
-                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
-                } else if (parseFloat(row.match[0].similarity) < 0.97) {
-                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                    return '<i>'+row.taxonomicidentification+'</i> ('+parseFloat(row.similarity).toFixed(2)+')';
+                } else if (parseFloat(row.similarity) < 0.97) {
+                    return '<i>'+row.taxonomicidentification+'</i> ('+parseFloat(row.similarity).toFixed(2)+')';
                 } else {
-                    return '<i>'+row.match[0].taxonomicidentification+'</i> ('+parseFloat(row.match[0].similarity).toFixed(2)+')';
+                    return '<i>'+row.taxonomicidentification+'</i> ('+parseFloat(row.similarity).toFixed(2)+')';
                 }
             } else {
                 return '';
