@@ -28,6 +28,8 @@ use JSON;
 
 my $prev = '';
 my $res = [];
+my $limit = 30;
+my $i = 0;
 while (<>)
 {
     chomp;
@@ -36,6 +38,7 @@ while (<>)
     next if ($F[5] eq $prev);
     push @$res, { 'identity' => $F[0]+0, , 'shared-hashes' => $F[1], 'median-multiplicity' => $F[2]+0, 'p-value' => $F[3]+0, 'query' => $F[4], 'info' => $F[5] };
     $prev = $F[5];
-
+    last if ($i > $limit);
+    $i++;
 }
 print encode_json($res);
