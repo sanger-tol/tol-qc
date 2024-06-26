@@ -110,10 +110,10 @@ sub parse_gs
     {
         $kcov = `grep ^kmercov $model | awk '{print \$2}'`;
         chomp $kcov;
-        $kcov = $kcov+0;
+        $kcov = $kcov+0 if $kcov;
         $dup = `grep ^bias $model | awk '{print \$2}'`;
         chomp $dup;
-        $dup = $dup+0;
+        $dup = $dup+0 if $dup;
     }
     my $hash = { p => $p, k => $k, dup => $dup, kcov => $kcov, version => $version,
         min => { het => $min_het, len => $min_len, rep => $min_rep, uniq => $min_uniq, fit => $min_fit, err => $min_err },
