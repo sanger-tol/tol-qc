@@ -138,25 +138,30 @@ sub run2lims
         $position = 'NULL';
     }
     return \%hash unless $id_run;
-    #  1 public_name
-    #  2 common_name
-    #  3 pipeline_id_lims
-    #  4 name
-    #  5 supplier_name
-    #  6 accession_number
-    #  7 donor_id
-    #  8 taxon_id
-    #  9 description
-    # 10 id_run
-    # 11 position
-    # 12 tag_index
-    # 13 tag_sequence
-    # 14 tag2_sequence
-    # 15 description
-    # 16 date
-    # 17 study_id
-    # 18 study_name
-    # 19 manual_qc
+     #  1 file    /seq/22577/22577_5#2.cram
+     #  2 tolid   aRhiBiv1
+     #  3 common_name     Rhinatrema bivittatum
+     #  4 pipeline        Chromium genome
+     #  5 library DN486106K:D1
+     #  6 sample  4642STDY6775383
+     #  7 supplier_name   Rb
+     #  8 biosample       SAMEA104387956
+     #  9 biospecimen     4642STDY6775383
+     # 10 taxon_id        194408
+     # 11 description     NULL
+     # 12 instrument_model        HiSeqX
+     # 13 instrument_name HX8
+     # 14 run_complete    2017-05-25 08:22:15
+     # 15 run_id  22577
+     # 16 lane    5
+     # 17 tag     2
+     # 18 tag_seq1        GCTGAATT
+     # 19 tag_seq2        NULL
+     # 20 run_status      qc complete
+     # 21 run_date        2017-06-03 15:59:16
+     # 22 study_id        4642
+     # 23 study   Vertebrate Genome Project_CAECILIAN
+     # 24 manual_qc       1
     my $track = qq[$ENV{TOLQCROOT}/track];
     my $lims = -s "$track/tol_illumina_data.fofn.part" ? "$track/tol_illumina_data.fofn.part" : "$track/tol_illumina_data.fofn";
     my $fh;
@@ -177,17 +182,110 @@ sub run2lims
     {
         chomp;
         my @F = split /\t/;
-        $hash{accession_number} = $F[6];
-        $hash{sanger_id} = $F[4];
-        $hash{taxon_id} = $F[8];
-        $hash{species_lims} = $F[2];
-        $hash{model} = $F[10];
-        $hash{tag_sequence} = $F[14];
-        $hash{tag2_sequence} = $F[15];
-        $hash{run_qc_status} = $F[16];
-        $hash{date} = substr($F[17],0,10);
-        $hash{pipeline_id_lims} = $F[3];
-        $hash{npg_qc_status} = $F[20];
+        if (scalar @F > 21)
+        {
+            $hash{irods_path} = dirname($F[0]);
+            $hash{irods_file} = basename($F[0]);
+            $hash{species_lims} = $F[2];
+            $hash{pipeline_id_lims} = $F[3];
+            $hash{library_id} = $F[4];
+            $hash{sanger_id} = $F[5];
+            $hash{supplier_name} = $F[6];
+            $hash{accession_number} = $F[7];
+            $hash{biospecimen_accession} = $F[8];
+            $hash{taxon_id} = $F[9];
+            $hash{description} = $F[10];
+            $hash{model} = $F[11];
+            $hash{instrument} = $F[12];
+            $hash{run_complete} = substr($F[13],0,10);
+            $hash{id_run} = $F[14];
+            $hash{position} = $F[15];
+            $hash{tag_index} = $F[16];
+            $hash{tag_sequence} = $F[17];
+            $hash{tag2_sequence} = $F[18];
+            $hash{run_qc_status} = $F[19];
+            $hash{date} = substr($F[20],0,10);
+            $hash{study_id} = $F[21];
+            $hash{study_name} = $F[22];
+            $hash{npg_qc_status} = $F[23];
+    }
+    else
+    {
+            $hash{irods_path} = dirname($F[0]);
+            $hash{irods_file} = basename($F[0]);
+            $hash{species_lims} = $F[2];
+            $hash{pipeline_id_lims} = $F[3];
+            $hash{library_id} = $F[4];
+            $hash{sanger_id} = $F[4];
+            $hash{supplier_name} = $F[5];
+            $hash{accession_number} = $F[6];
+            $hash{biospecimen_accession} = $F[7];
+            $hash{taxon_id} = $F[8];
+            $hash{description} = $F[9];
+            $hash{model} = $F[10];
+            $hash{id_run} = $F[11];
+            $hash{position} = $F[12];
+            $hash{tag_index} = $F[13];
+            $hash{tag_sequence} = $F[14];
+            $hash{tag2_sequence} = $F[15];
+            $hash{run_qc_status} = $F[16];
+            $hash{date} = substr($F[17],0,10);
+            $hash{run_complete} = $hash{date};
+            $hash{study_id} = $F[18];
+            $hash{study_name} = $F[19];
+            $hash{npg_qc_status} = $F[20];
+    }
+
+     #  1 /seq/illumina/runs/44/44888/lane2/plex2/44888_2#2.cram
+     #  2 icCryRufc1
+     #  3 Cryptophagus ruficornis
+     #  4 Hi-C - Arima v2
+     #  5
+     #  6 DTOL12825154
+     #  7 Ox001148
+     #  8 SAMEA10200782
+     #  9 SAMEA10107069
+     # 10 877929
+     # 11 FD20709520
+     # 12 NovaSeq
+     # 13 
+     # 14 
+     # 15 44888
+     # 16 2
+     # 17 2
+     # 18 CCTCACGT
+     # 19 TAGAACTG
+     # 20 qc complete
+     # 21 2022-05-17 13:55:56
+     # 22 5901
+     # 23 DTOL_Darwin Tree of Life
+     # 24 1
+
+     #  1 /seq/illumina/runs/48/48803/lane5-6/plex4/48803_5-6#4.cram
+     #  2 iyOecSmar38
+     #  3 Oecophylla smaragdina
+     #  4 Hi-C - Arima v2
+     #  5 SQPP-52276-N:H3
+     #  6 7308STDY14643763
+     #  7 FD22333670_HIC
+     #  8 SAN22000473
+     #  9 7308STDY14643763
+     # 10 84561
+     # 11 Tissue material in absolute ethanol, for HiC
+     # 12 NovaSeqX
+     # 13 NX1
+     # 14 2024-04-17 15:34:48
+     # 15 48803
+     # 16 NULL
+     # 17 4
+     # 18 GCTGTTCA
+     # 19 GAGAGTAG
+     # 20 qc complete
+     # 21 2024-04-19 13:31:04
+     # 22 7308
+     # 23 Microsporidia
+     # 24 1
+
     }
     close($fh);
     return \%hash;

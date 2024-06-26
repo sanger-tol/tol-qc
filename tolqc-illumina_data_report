@@ -7,7 +7,7 @@ use File::Temp qw/ tempfile tempdir /;
 use JSON;
 use File::Basename;
 
-my $illumina_json = `for type in genomic transcriptomic; do for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name \${type}_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -iname "*_F0xB00.stats"; done; done | bamstats2json -b $ENV{TOLQCROOT}/data/ -p`;
+my $illumina_json = `for type in genomic transcriptomic resequencing; do for dir in \`find -L $ENV{TOLQCROOT}/data -mindepth 4 -maxdepth 4 -type d -name \${type}_data\`; do find -L \$dir -mindepth 4 -maxdepth 4 -type f -iname "*_F0xB00.stats"; done; done | bamstats2json -b $ENV{TOLQCROOT}/data/ -p`;
 
 my $accessions = load_accessions();
 my $illumina = decode_json($illumina_json);

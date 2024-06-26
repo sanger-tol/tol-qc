@@ -167,12 +167,16 @@ sub parse_asmstats
     while (<$fh>)
     {
         chomp;
-        if (/^A = \d+ \(([\d\.]+)\%\), C = \d+ \(([\d\.]+)\%\), G = \d+ \(([\d\.]+)\%\), T = \d+ \(([\d\.]+)\%\)/)
+        if (/^A = (\d+) \(([\d\.]+)\%\), C = (\d+) \(([\d\.]+)\%\), G = (\d+) \(([\d\.]+)\%\), T = (\d+) \(([\d\.]+)\%\)/)
         {
-            $$stats{a} = $1+0;
-            $$stats{c} = $2+0;
-            $$stats{g} = $3+0;
-            $$stats{t} = $4+0;
+            $$stats{bases_a} = $1+0;
+            $$stats{a} = $2+0;
+            $$stats{bases_c} = $3+0;
+            $$stats{c} = $4+0;
+            $$stats{bases_g} = $5+0;
+            $$stats{g} = $6+0;
+            $$stats{bases_t} = $7+0;
+            $$stats{t} = $8+0;
         }
         elsif (/^sum = (\d+), n = (\d+), (ave|mean) = ([\d\.]+), largest = (\d+), smallest = (\d+)$/ || /^SCAFFOLD\tsum = (\d+), n = (\d+), (ave|mean) = ([\d\.]+), largest = (\d+), smallest = (\d+)$/)
         {
@@ -233,7 +237,8 @@ sub parse_asmstats
             $$stats{match} = $$match{match};
         }
     }
-    my $dups = 0;
+    my $dup_reads = 0;
+    my $dup_pct = 0;
     my $dup_file = $input;
     $dup_file =~ s/stats$/txt/;
     if (-s $dup_file)
@@ -248,16 +253,18 @@ sub parse_asmstats
         {
             chomp;
             next unless (/\d+/);
-            my (undef,$reads,undef,undef,$dup_reads) = split /\s+/;
-            if ($reads && $dup_reads)
+            my (undef,$reads,undef,undef,$dups) = split /\s+/;
+            if ($reads && $dups)
             {
-                $dups = 100*$dup_reads/$reads;
+                $dup_pct = 100*$dups/$reads;
+                $dup_reads = $dups;
                 last;
             }
         }
         close($fh);
     }
-    $$stats{dups} = $dups;
+    $$stats{dups} = $dup_pct;
+    $$stats{dup_reads} = $dup_reads ? $dup_reads : 0;
 
     my $filt = 0;
     my $block = $input;
@@ -269,6 +276,7 @@ sub parse_asmstats
         chomp $filt;
     }
     $$stats{filtered} = $$stats{n} ? 100*$filt/$$stats{n} : 0;
+    $$stats{filtered_reads} = $filt ? $filt : 0;
 
     if (exists $$opts{base})
     {
@@ -356,11 +364,14 @@ sub movie2lims
     return $hash unless (`grep $movie $data`);
     open my $fh, "grep $movie $data | cut -f1,6,7 | ";
     my ($rundir,$run,$well);
+    my @files = ();
     while (<$fh>)
     {
         chomp;
         ($rundir,$run,$well) = split /\t/;
-        $rundir =~ s/\/[^\/]+$//;
+        $rundir =~ s/^.+://;
+        my $irods_file = basename($rundir);
+        $rundir = dirname($rundir);
         $run =~ s/RUN(\d)/RUN-$1/;
         $run = "TRACTION-RUN-$run" if ($run =~ /^(\d+)$/ && $run<1000);
         $run =~ s/\s+$//;
@@ -368,6 +379,11 @@ sub movie2lims
         $$hash{run} = $run;
         $$hash{well_label} = $well;
         $well =~ s/0//;
+        if ($barcode ne 'NULL')
+        {
+            next unless $irods_file =~ m/$barcode/;
+        }
+        $$hash{irods_file} = $irods_file;
     }
     close($fh);
     my %pipeline_map = (
@@ -388,10 +404,16 @@ sub movie2lims
         my @F = split /\t/;
         $$hash{species_lims} = $F[6];
         $$hash{species_name} = $F[6];
+        $$hash{supplier_name} = $F[1];
+        $$hash{taxon_id} = $F[5];
         $$hash{accession_number} = $F[2];
+        $$hash{biospecimen_accession} = $F[4];
         $$hash{sanger_id} = $F[0];
         $$hash{tag_sequence} = $F[9];
         $$hash{library_load_name} = $F[10];
+        $$hash{study_id} = $F[13];
+        $$hash{study_name} = $F[14];
+        $$hash{description} = $F[7];
         $$hash{pipeline_id_lims} = (scalar @F>=16 && exists $pipeline_map{"$F[15]"}) ? $pipeline_map{"$F[15]"} : $F[15];
     }
     close($fh2);
